@@ -3,8 +3,21 @@
 > 目标：把 cc-island 的 Mac 端 bridge（读取凭证 → 查官方用量接口 → 算本地日志花费 → BLE 推送）移植到 Windows，
 > 数据仍然只在本机处理，通过蓝牙 BLE 把算好的数字推到 M5Stack StopWatch。
 > 并在本次移植中**新增 GLM（智谱 bigmodel.cn）用量统计**与 **DeepSeek 余额查询**，表盘升级为
-> Claude / Codex / GLM / DeepSeek 四家（分两页显示，交互见 §5.5）。
+> Claude / ChatGPT / GLM / DeepSeek 四家（分两页显示，交互见 §5.5）。
 > 手表固件仅做 UI 演进（新增第二页），BLE 协议向后兼容，刷新/按钮交互不变。
+
+---
+
+## 0. 最新修订（实现与本文草图不一致处，以本节为准）
+
+1. **表盘字段精简**：三家窗口行的今日花费 `$` 与 tokens `t` 已移除，窗口行只含 `{h,d,r}`；
+   DeepSeek 余额行的 `ok`（可用态圆点）、`gnt`（赠金）、`x_cur/x_bal`（第二币种）已移除，只含 `{cur,bal}`。
+2. **Codex 更名 ChatGPT**：表盘行名、logo 资产（`logo_chatgpt.c`/`icon_chatgpt.c`）、bridge 数据键与渲染标题均已更名；
+   BLE 线上键仍为 `"x"`（保持协议向后兼容），凭证仍读 OpenAI Codex CLI 的 `~/.codex/auth.json`。
+3. **GLM logo 改紫色**：官方 Z 标着 `kGlmColor`（0x6E56CF），不再用官方白色。
+4. **Claude/ChatGPT logo 换官方标**：源图 `tools/claude.png`、`tools/openai.png`（浏览器渲染官方 SVG 所得）。
+5. **成本统计降级为诊断项**：本地日志花费扫描从主流程移除，保留 `_log_costs` 仅供 `--json` 查看，表盘不显示。
+   本文中 §4.4/§5.2/§5.4 的成本/归因/ok-gnt 相关草图按此理解。
 
 ---
 
@@ -46,7 +59,7 @@ cc-island 的运行时分为两半：
 
 ---
 
-## 2. 移植后总体架构（Claude + Codex + GLM + DeepSeek 四家）
+## 2. 移植后总体架构（Claude + ChatGPT + GLM + DeepSeek 四家）
 
 ```
   Windows（大脑）                                StopWatch / CC Island app（分页四行版）
@@ -56,7 +69,7 @@ cc-island 的运行时分为两半：
    · 读 %USERPROFILE%\.claude\.credentials.json   ← 替换 Keychain
    · 发现 GLM / DeepSeek API Key                  ← 新增（通用 key 扫描器，§4.2/§5.2）
      (env / settings.json / config.toml)
-   · 调四家接口 + 本地日志算花费
+   · 调四家接口（成本统计降级为 --json 诊断项）
    · bleak(WinRT) 扫描 "CC Island"/NUS UUID
    · 每隔 N 分钟 / 收到 "R" notify 时推 payload v3：
      {"c":{...}, "x":{...}, "g":{...}, "ds":{...}} ──BLE(NUS)──▶ RX write → 解析 → 刷分页 UI
@@ -67,14 +80,14 @@ cc-island 的运行时分为两半：
 
 四家的数据源与机制对照（DeepSeek 是**按量计费 + 余额制**，没有 5h/7d 窗口，表盘行渲染模式不同）：
 
-| | Claude Code | Codex | GLM（bigmodel.cn） | DeepSeek |
+| | Claude Code | ChatGPT | GLM（bigmodel.cn） | DeepSeek |
 |---|---|---|---|---|
 | 用量/余额来源 | `api.anthropic.com/api/oauth/usage` | `chatgpt.com/backend-api/wham/usage` | `open.bigmodel.cn/api/monitor/usage/quota/limit`（非官方文档端点） | `api.deepseek.com/user/balance`（**官方文档端点**） |
 | 凭证 | OAuth（`.credentials.json`，可 refresh） | `~/.codex/auth.json` access_token | API Key（env / settings.json / config.toml） | API Key（env / settings.json / config.toml） |
 | 认证头 | `Bearer <oauth token>` | `Bearer <access_token>` | `<key>`（无前缀，401 退避 Bearer） | `Bearer <key>`（官方标准） |
 | 5h/7d 窗口 | `five_hour` / `seven_day` | `primary_window` / `secondary_window` | `limits[]` 两个 `TOKENS_LIMIT` | 无（`is_available` + 余额） |
-| 今日花费/tokens | 本地 `~/.claude` 日志 | 本地 `~/.codex` 日志 | 本地日志按 `glm-*` 归因 | 本地日志按 `deepseek-*` 归因（限制见 §5.4） |
-| 表盘行类型 | 窗口行 | 窗口行 | 窗口行 | **余额行**（大字余额 + 赠金 + 可用态） |
+| 今日花费/tokens | **已移除**（表盘不显示，日志统计仅 `--json` 诊断） | 〃 | 〃 | 〃 |
+| 表盘行类型 | 窗口行 | 窗口行 | 窗口行 | **余额行**（大字余额；赠金/可用态已移除） |
 
 协议侧：payload 沿 `v1 → v2(+g) → v3(+ds)` 增量演进，**每一步向后兼容**（见 §4.5、§5.5）；NUS 三个 UUID、设备名 `CC Island`、刷新策略（定时 5 分钟 + 蓝键即时 + 5s 防抖 + 6h 旧数据兜底）全部不变。
 
@@ -272,9 +285,9 @@ def _owner_of(model):
 ### 4.5 payload v2（向后兼容的协议增量）
 
 ```json
-{"c":{"h":12,"d":34,"r":123,"$":1.23,"t":45678},
- "x":{"h":5,"d":8,"r":42,"$":0.5,"t":1234},
- "g":{"h":44,"d":53,"r":0,"$":0,"t":78901}}
+{"c":{"h":12,"d":34,"r":123},
+ "x":{"h":5,"d":8,"r":42},
+ "g":{"h":44,"d":53,"r":0}}
 ```
 
 - `compact()` 在 `data["glm"]` 无 error 时追加 `"g"`；未配置/查失败且无缓存时**整个键省略**，不推零值。
@@ -362,10 +375,10 @@ def fetch_deepseek():
 
 ```json
 {"c":{...}, "x":{...}, "g":{...},
- "ds":{"ok":true, "cur":"CNY", "bal":110.00, "gnt":10.00, "x_cur":"USD", "x_bal":2.50, "t":3456}}
+ "ds":{"cur":"CNY", "bal":110.00}}
 ```
 
-- `ok=false` 或 `bal` 低于固件阈值时触发 §5.3 提醒；`x_cur/x_bal` 为可选的第二币种。
+- `bal` 跌破固件阈值时触发 §5.3 提醒；`ok`/`gnt`/`x_cur/x_bal` 随功能精简移除。
 - 余额行与窗口行的数据形状不同（无 h/d/r），固件解析分支按键区分。
 
 **固件 UI 方案**（与 §4 的 GLM 行合并考虑，两行新增内容一起放）：
@@ -373,25 +386,25 @@ def fetch_deepseek():
 | 方案 | 做法 | 优点 | 缺点 | 结论 |
 |---|---|---|---|---|
 | A. 四行单页 | 466×466 圆屏塞 4 行（行高 ~64px，y=±52/±156，字号 16–20） | 无新交互 | 圆屏上下边缘弦宽仅 ~340px，字号过小，可读性差 | 备选 |
-| **B. 触摸翻页（推荐）** | 保持现有两行布局原样作为**第 1 页**（Claude/Codex，零回归）；新增**第 2 页**两行：GLM（窗口行，复用 `build_row`）+ DeepSeek（余额行）；触摸屏幕左/右半区翻页，`onRunning` 处理 `LV_EVENT_CLICK` 判触点 x | 两行布局与字号完全不动，回归风险最小；分页语义清晰（第 1 页主用、第 2 页扩展）；触摸屏硬件现成 | GLM/DS 需翻页才可见 | ✅ 推荐 |
+| **B. 触摸翻页（推荐）** | 保持现有两行布局原样作为**第 1 页**（Claude/ChatGPT，零回归）；新增**第 2 页**两行：GLM（窗口行，复用 `build_row`）+ DeepSeek（余额行）；触摸屏幕左/右半区翻页，`onRunning` 处理 `LV_EVENT_CLICK` 判触点 x | 两行布局与字号完全不动，回归风险最小；分页语义清晰（第 1 页主用、第 2 页扩展）；触摸屏硬件现成 | GLM/DS 需翻页才可见 | ✅ 推荐 |
 
 方案 B 细节：
 
 - **两页最终渲染效果见 §5.6 预览图**（`docs/watchface-preview.png`，由 `docs/mockup.html` 出图）。
 
-- 第 2 页 GLM 行直接复用现有 `build_row`/`ProviderRow`；DeepSeek 行为新增的余额行类型：大字位置显示 `¥110.00`（按 `cur` 映射符号：CNY→`¥`，USD→`$`），detail 行显示 `赠金 ¥10.00`（有第二币种则附 `· $2.50`），可用态异常时行降透明度。
+- 第 2 页 GLM 行直接复用现有 `build_row`/`ProviderRow`；DeepSeek 行为新增的余额行类型：大字位置显示 `¥110.00`（按 `cur` 映射符号：CNY→`¥`，USD→`$`），行仅保留余额大字（赠金行与 ok 圆点已随功能精简移除）。
 - 页面状态用 `static int s_page` 持久（app 关闭重开后停在原页，符合"瞄一眼"的使用习惯）。
 - 蓝键刷新、双键回主页、80%/低余额振动逻辑不变；logo 新增 `logo_glm.c` 与 `logo_deepseek.c`，均采用**官方标**：GLM 为官方白色 Z 标（`tools/glm.png`，带 alpha——黑色表盘上按官方暗底处理原样显示白色，行文字仍用 `kGlmColor`），DeepSeek 为官方 favicon 鲸鱼（`tools/deepseek.svg` → 渲染为 `tools/deepseek.png`）。`gen_icons.py` 生成：glm/deepseek 源为 PNG，走免依赖的 `png_to_logo.py`（alpha/暗度两种 coverage 规则 + 等比 fit）；claude/codex 源为 SVG，走 svglib 管线。商标声明同现有条目。
 - `app_codex.cpp` 改动集中在：页容器 ×2、触摸事件、`parse_and_apply` 里按 `"c"/"x"/"g"/"ds"` 四键分发 + 余额行 apply 函数。`ble_nus.cpp/h` 依旧零改动。
 
 ### 5.6 表盘效果预览（四提供商）
 
-![CC Island 表盘效果预览：第 1 页 Claude/Codex，第 2 页 GLM/DeepSeek，含 payload v3 字段映射与状态示例](watchface-preview.png)
+![CC Island 表盘效果预览：第 1 页 Claude/ChatGPT，第 2 页 GLM/DeepSeek，含 payload v3 字段映射与状态示例](watchface-preview.png)
 
-上图按 `app_codex.cpp` 的真实布局参数渲染（466×466 圆屏、行容器 300×140、行垂直中心 y=±80、进度条 300×24、字号 26/28/24、品牌色取 `kClaudeColor/kCodexColor/kGlmColor/kDsColor`）：
+上图按 `app_codex.cpp` 的真实布局参数渲染（466×466 圆屏、行容器 300×140、行垂直中心 y=±80、进度条 300×24、字号 26/28/24、品牌色取 `kClaudeColor/kChatgptColor/kGlmColor/kDeepseekColor`）：
 
-- **第 1 页**：Claude / Codex 窗口行——与现版表盘渲染完全一致（零回归）。
-- **第 2 页**：GLM 窗口行（含 `reset ?` 边界态）+ DeepSeek 余额行（大字余额 `¥110.00`、灰色赠金行含第二币种、绿色 `ok` 圆点、无进度条）。
+- **第 1 页**：Claude / ChatGPT 窗口行（无花费/tokens 行）——布局与现版一致。
+- **第 2 页**：GLM 窗口行（含 `reset ?` 边界态，官方 Z 标着紫色）+ DeepSeek 余额行（大字余额 `¥110.00`，无进度条；ok 圆点/赠金/tokens 行已移除）。
 - **状态示例卡**：未配置（`--`、整行降透明度）、`reset ?`、低余额（跌破 `kDsLowBalanceCny` 首次振动、数字转琥珀色）——对应 §9.3 测试项 8。
 - 图例部分给出 payload v3 各键 ↔ 表盘位置的映射，可直接作为联调时的对照表。
 
@@ -487,7 +500,7 @@ $settings = New-ScheduledTaskSettingsSet -RestartCount 999 `
               -RestartInterval (New-TimeSpan -Minutes 1) `
               -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable
 Register-ScheduledTask -TaskName "CCIslandBridge" -Action $action -Trigger $trigger `
-    -Settings $settings -Description "CC Island BLE bridge (Claude/Codex/GLM/DeepSeek -> M5 StopWatch)" -Force
+    -Settings $settings -Description "CC Island BLE bridge (Claude/ChatGPT/GLM/DeepSeek -> M5 StopWatch)" -Force
 
 Write-Host "完成。手表上打开 CC Island app 即可连接。日志: $log"
 Write-Host "卸载: Unregister-ScheduledTask -TaskName CCIslandBridge"

@@ -3,16 +3,16 @@
 CC Island bridge — macOS / Windows / Linux.
 
 Reads the credentials your CLIs already wrote, queries the providers' own
-usage/balance endpoints, computes cost from local session logs, and pushes one
-compact JSON line per update to the StopWatch over BLE (Nordic UART Service).
+usage/balance endpoints, and pushes one compact JSON line per update to the
+StopWatch over BLE (Nordic UART Service).
 
 Providers (payload v3, one line of JSON):
-  c   Claude Code  {h,d,r,$,t}   GET api.anthropic.com/api/oauth/usage
-  x   Codex        {h,d,r,$,t}   GET chatgpt.com/backend-api/wham/usage
-  g   GLM          {h,d,r,$,t}   GET open.bigmodel.cn/api/monitor/usage/quota/limit
-                                   (community endpoint, see docs §4.1; z.ai for intl)
-  ds  DeepSeek     {ok,cur,bal,gnt[,x_cur,x_bal],t}
-                                 GET api.deepseek.com/user/balance (official)
+  c   Claude Code  {h,d,r}    GET api.anthropic.com/api/oauth/usage
+  x   ChatGPT      {h,d,r}    GET chatgpt.com/backend-api/wham/usage
+                               (credential: OpenAI Codex CLI's ~/.codex/auth.json)
+  g   GLM          {h,d,r}    GET open.bigmodel.cn/api/monitor/usage/quota/limit
+                               (community endpoint, see docs §4.1; z.ai for intl)
+  ds  DeepSeek     {cur,bal}  GET api.deepseek.com/user/balance (official)
 
 Recipes mirror ericjypark/codex-island. Platform notes
 (docs/windows-port-design.zh-CN.md):
@@ -139,9 +139,9 @@ def _parse_reset(value):
 
 
 # --------------------------------------------------------------------------- #
-# Codex
+# ChatGPT (usage credential from the OpenAI Codex CLI)
 # --------------------------------------------------------------------------- #
-def fetch_codex():
+def fetch_chatgpt():
     path = os.path.expanduser("~/.codex/auth.json")
     try:
         with open(path) as f:
@@ -150,7 +150,7 @@ def fetch_codex():
     except (OSError, json.JSONDecodeError):
         token = None
     if not token:
-        return {"error": "no codex auth"}
+        return {"error": "no codex auth (codex login)"}
 
     status, obj = _http(
         "GET", "https://chatgpt.com/backend-api/wham/usage",
@@ -543,213 +543,27 @@ def fetch_deepseek():
     # Multi-currency accounts list one entry per currency; CNY first.
     infos = sorted(infos, key=lambda x: 0 if x.get("currency") == "CNY" else 1)
     main = infos[0]
-    out = {
-        "ok": bool(obj.get("is_available")),
+    return {
         "currency": main.get("currency", "CNY"),
         "balance": fnum(main.get("total_balance")),
-        "granted": fnum(main.get("granted_balance")),
-        "extra": None,
     }
-    if len(infos) > 1:
-        out["extra"] = {"currency": infos[1].get("currency", "USD"),
-                        "balance": fnum(infos[1].get("total_balance"))}
-    return out
-
-
-# --------------------------------------------------------------------------- #
-# Cost — parse local session logs, attributed per provider by model name
-# --------------------------------------------------------------------------- #
-# Per-million-token USD rates: (input, output, cache_create, cache_read)
-_PRICING = {
-    "claude-opus-4-8": (5, 25, 6.25, 0.50),
-    "claude-opus-4-7": (5, 25, 6.25, 0.50),
-    "claude-opus-4-6": (5, 25, 6.25, 0.50),
-    "claude-opus-4-5": (5, 25, 6.25, 0.50),
-    "claude-sonnet-4-6": (3, 15, 3.75, 0.30),
-    "claude-sonnet-4-5": (3, 15, 3.75, 0.30),
-    "claude-haiku-4-5": (1, 5, 1.25, 0.10),
-    "gpt-5.5": (5, 30, 5, 0.50),
-    "gpt-5.4": (2.5, 15, 2.5, 0.25),
-    "gpt-5.2": (1.75, 14, 1.75, 0.175),
-    "gpt-5.4-mini": (0.75, 4.5, 0.75, 0.075),
-    "gpt-5-codex": (1.25, 10, 1.25, 0.125),
-}
-
-# Optional CNY-priced table for GLM / DeepSeek (per-million CNY, same tuple
-# order; converted to USD with CNY_PER_USD). Both providers are subscription /
-# pay-as-you-go where a $ estimate is secondary — leave empty (tokens still
-# counted, cost stays 0.00) or fill from the official pricing pages:
-#   https://open.bigmodel.cn/pricing  /  https://api-docs.deepseek.com/zh-cn/quick_start/pricing
-_PRICING_CNY = {
-    # "glm-4.6": (in, out, cache_create, cache_read),
-    # "deepseek-chat": (in, out, cache_create, cache_read),
-}
-CNY_PER_USD = 7.2
-
-
-def _canonical_model(raw):
-    # Strip a trailing date suffix "-XXXXXXXX" (dash + 8 digits).
-    if len(raw) > 9 and raw[-9] == "-" and raw[-8:].isdigit():
-        return raw[:-9]
-    return raw
-
-
-def _owner_of(model):
-    """Which watch row a logged model belongs to (docs §4.4)."""
-    m = _canonical_model(model or "")
-    if m.startswith("glm"):
-        return "glm"
-    if m.startswith("deepseek"):
-        return "ds"
-    if m.startswith("gpt"):
-        return "codex"
-    return "claude"
-
-
-def _cost(model, in_, out, cc, cr):
-    r = _PRICING.get(_canonical_model(model))
-    if r:
-        return (in_ * r[0] + out * r[1] + cc * r[2] + cr * r[3]) / 1_000_000
-    r = _PRICING_CNY.get(_canonical_model(model))
-    if r:
-        return (in_ * r[0] + out * r[1] + cc * r[2] + cr * r[3]) / 1_000_000 / CNY_PER_USD
-    return 0.0
-
-
-def _today_midnight():
-    import datetime
-    return datetime.datetime.now().replace(
-        hour=0, minute=0, second=0, microsecond=0).timestamp()
-
-
-def _parse_ts(s):
-    try:
-        import datetime
-        return datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-    except (ValueError, AttributeError):
-        return 0.0
-
-
-def _scan_claude_logs(midnight, totals):
-    """~/.claude/projects/**/*.jsonl — assistant usage, deduped by msg+request."""
-    import glob
-    pat = os.path.expanduser("~/.claude/projects/**/*.jsonl")
-    for path in glob.glob(pat, recursive=True):
-        try:
-            if os.path.getmtime(path) < midnight - 86400:
-                continue
-            with open(path, "rb") as f:
-                for line in f:
-                    try:
-                        o = json.loads(line)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-                    if o.get("type") != "assistant":
-                        continue
-                    msg = o.get("message") or {}
-                    u = msg.get("usage") or {}
-                    model = msg.get("model") or ""
-                    if not u or model == "<synthetic>" or model.startswith("synthetic"):
-                        continue
-                    if _parse_ts(o.get("timestamp", "")) < midnight:
-                        continue
-                    mid, rid = msg.get("id", ""), o.get("requestId", "")
-                    if mid and rid:
-                        # Dedup only within the same model owner; cheap and safe.
-                        key = _owner_of(model) + ":" + mid + ":" + rid
-                        if key in _seen:
-                            continue
-                        _seen.add(key)
-                    i = u.get("input_tokens", 0) or 0
-                    out = u.get("output_tokens", 0) or 0
-                    cc = u.get("cache_creation_input_tokens", 0) or 0
-                    cr = u.get("cache_read_input_tokens", 0) or 0
-                    if not (i or out or cc or cr):
-                        continue
-                    bucket = totals[_owner_of(model)]
-                    bucket[0] += _cost(model, i, out, cc, cr)
-                    bucket[1] += i + out + cc + cr
-        except OSError:
-            continue
-
-
-def _scan_codex_logs(midnight, totals):
-    """~/.codex/sessions/**/rollout-*.jsonl — token_count events per model."""
-    import glob
-    pat = os.path.expanduser("~/.codex/sessions/**/rollout-*.jsonl")
-    for path in glob.glob(pat, recursive=True):
-        try:
-            if os.path.getmtime(path) < midnight - 86400:
-                continue
-            cur_model = None
-            with open(path, "rb") as f:
-                for line in f:
-                    try:
-                        o = json.loads(line)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-                    t = o.get("type")
-                    if t == "turn_context":
-                        m = (o.get("payload") or {}).get("model")
-                        if m:
-                            cur_model = m
-                        continue
-                    if t != "event_msg":
-                        continue
-                    p = o.get("payload") or {}
-                    if p.get("type") != "token_count":
-                        continue
-                    last = (p.get("info") or {}).get("last_token_usage") or {}
-                    if not last or _parse_ts(o.get("timestamp", "")) < midnight:
-                        continue
-                    ti = last.get("input_tokens", 0) or 0
-                    cached = last.get("cached_input_tokens", 0) or 0
-                    nonc = max(0, ti - cached)
-                    out = last.get("output_tokens", 0) or 0
-                    if not (nonc or cached or out):
-                        continue
-                    bucket = totals[_owner_of(cur_model or "gpt-5.4")]
-                    bucket[0] += _cost(cur_model or "gpt-5.4", nonc, out, 0, cached)
-                    bucket[1] += nonc + out + cached
-        except OSError:
-            continue
-
-
-def _log_costs(midnight):
-    """Return {owner: [cost, tokens]} for owners claude/codex/glm/ds."""
-    totals = {name: [0.0, 0] for name in ("claude", "codex", "glm", "ds")}
-    global _seen
-    _seen = set()
-    _scan_claude_logs(midnight, totals)
-    _scan_codex_logs(midnight, totals)
-    return totals
-
-
-_seen = set()
 
 
 # --------------------------------------------------------------------------- #
 # Combine + render
 # --------------------------------------------------------------------------- #
 def collect():
-    midnight = _today_midnight()
-    data = {
+    return {
         "ts": int(time.time()),
         "claude": fetch_claude(),
-        "codex": fetch_codex(),
+        "chatgpt": fetch_chatgpt(),
         "glm": fetch_glm(),
         "deepseek": fetch_deepseek(),
     }
-    totals = _log_costs(midnight)
-    owner_of_row = {"claude": "claude", "codex": "codex", "glm": "glm", "deepseek": "ds"}
-    for name, owner in owner_of_row.items():
-        cost, tok = totals.get(owner, (0.0, 0))
-        data[name]["cost_today"] = round(cost, 2)
-        data[name]["tokens_today"] = tok
-    return data
 
 
-_TITLES = {"claude": "Claude Code", "codex": "Codex", "glm": "GLM", "deepseek": "DeepSeek"}
+_TITLES = {"claude": "Claude Code", "chatgpt": "ChatGPT", "glm": "GLM", "deepseek": "DeepSeek"}
+_ORDER = ("claude", "chatgpt", "glm", "deepseek")
 
 
 def _fmt_window(w):
@@ -768,18 +582,12 @@ def _fmt_window(w):
 
 def _fmt_balance(p):
     sym = "¥" if p.get("currency", "CNY") == "CNY" else "$"
-    line = f"[{'OK' if p.get('ok') else '!!'}]  bal {sym}{p.get('balance', 0):.2f}"
-    line += f"  (granted {sym}{p.get('granted', 0):.2f}"
-    if p.get("extra"):
-        xsym = "¥" if p["extra"].get("currency", "USD") == "CNY" else "$"
-        line += f" + {xsym}{p['extra'].get('balance', 0):.2f}"
-    line += ")"
-    return line
+    return f"bal {sym}{p.get('balance', 0):.2f}"
 
 
 def render(data):
     lines = []
-    for name in ("claude", "codex", "glm", "deepseek"):
+    for name in _ORDER:
         p = data.get(name) or {}
         title = _TITLES[name]
         if "error" in p:
@@ -787,13 +595,11 @@ def render(data):
             continue
         if name == "deepseek":
             lines.append(f"{title:12} {_fmt_balance(p)}")
-            lines.append(f"   today  ${p.get('cost_today', 0):.2f}   {p.get('tokens_today', 0):,} tok")
             continue
         plan = f" [{p['plan']}]" if p.get("plan") else ""
         lines.append(f"{title:12}{plan}")
         lines.append(f"   5h   {_fmt_window(p.get('five_hour'))}")
         lines.append(f"   7d   {_fmt_window(p.get('weekly'))}")
-        lines.append(f"   today  ${p.get('cost_today', 0):.2f}   {p.get('tokens_today', 0):,} tok")
     return "\n".join(lines)
 
 
@@ -810,8 +616,7 @@ RECONNECT_DELAY_S = 3
 MAX_STALE_PROVIDER_S = 6 * 60 * 60
 
 # Window providers use {five_hour, weekly}; DeepSeek is the balance-row provider.
-_WINDOW_PROVIDERS = ("claude", "codex", "glm")
-_ALL_PROVIDERS = ("claude", "codex", "glm", "deepseek")
+_ALL_PROVIDERS = ("claude", "chatgpt", "glm", "deepseek")
 
 
 def _provider_ok(name, p):
@@ -837,19 +642,18 @@ def _reset_min(w):
 def compact(data):
     """Short-key one-line JSON for the watch (payload v3).
 
-    Window rows: {h,d,r,$,t}. Providers that are unconfigured or failing with
-    no cached fallback are omitted entirely, so the watch shows its "--" state.
+    Window rows: {h,d,r}. The balance row: {cur,bal}. Providers that are
+    unconfigured or failing with no cached fallback are omitted entirely, so
+    the watch shows its "--" state.
     """
     def prov(p):
         return {
             "h": _win_pct(p.get("five_hour")),
             "d": _win_pct(p.get("weekly")),
             "r": _reset_min(p.get("five_hour")),
-            "$": round(p.get("cost_today", 0), 2),
-            "t": int(p.get("tokens_today", 0)),
         }
 
-    out = {"c": prov(data["claude"]), "x": prov(data["codex"])}
+    out = {"c": prov(data["claude"]), "x": prov(data["chatgpt"])}
 
     glm = data.get("glm") or {}
     if "error" not in glm:
@@ -857,17 +661,10 @@ def compact(data):
 
     ds = data.get("deepseek") or {}
     if "error" not in ds:
-        row = {
-            "ok": 1 if ds.get("ok") else 0,
+        out["ds"] = {
             "cur": ds.get("currency", "CNY"),
             "bal": round(ds.get("balance", 0), 2),
-            "gnt": round(ds.get("granted", 0), 2),
-            "t": int(ds.get("tokens_today", 0)),
         }
-        if ds.get("extra"):
-            row["x_cur"] = ds["extra"].get("currency", "USD")
-            row["x_bal"] = round(ds["extra"].get("balance", 0), 2)
-        out["ds"] = row
 
     return json.dumps(out, separators=(",", ":"))
 
@@ -898,8 +695,6 @@ async def ble_loop(interval_s):
             cached = last_good.get(name)
             if "error" in provider and cached and now - cached.get("_cached_at", 0) <= MAX_STALE_PROVIDER_S:
                 restored = {k: v for k, v in cached.items() if not k.startswith("_")}
-                restored["cost_today"] = provider.get("cost_today", restored.get("cost_today", 0))
-                restored["tokens_today"] = provider.get("tokens_today", restored.get("tokens_today", 0))
                 restored["stale"] = True
                 merged[name] = restored
             else:
@@ -1017,7 +812,7 @@ def main():
 
     ap = argparse.ArgumentParser(
         prog="codexisland_bridge",
-        description="CC Island bridge — Claude/Codex/GLM/DeepSeek usage & balance on the M5 StopWatch over BLE",
+        description="CC Island bridge — Claude/ChatGPT/GLM/DeepSeek usage & balance on the M5 StopWatch over BLE",
     )
     ap.add_argument("--ble", nargs="?", const=5.0, default=None, type=float, metavar="MIN",
                     help="push to the watch over BLE every MIN minutes (default: 5)")

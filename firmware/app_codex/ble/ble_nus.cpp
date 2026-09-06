@@ -103,6 +103,11 @@ int tx_access_cb(uint16_t, uint16_t, struct ble_gatt_access_ctxt*, void*)
     return 0;  // notify-only; nothing to read
 }
 
+// C++26/-Werror: NimBLE's designated initializers leave trailing members
+// implicit; silence the missing-field-initializers blow-up for these tables.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
 const struct ble_gatt_chr_def kChrs[] = {
     {
         .uuid = &kRxUuid.u,
@@ -126,6 +131,8 @@ const struct ble_gatt_svc_def kSvcs[] = {
     },
     {0},
 };
+
+#pragma GCC diagnostic pop
 
 int gap_event(struct ble_gap_event* event, void*)
 {

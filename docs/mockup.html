@@ -5,8 +5,8 @@
 <title>CC Island 表盘效果预览 — 四提供商（Windows 移植方案）</title>
 <style>
   :root{
-    --claude:#F2854D; --codex:#3B9EFF; --glm:#6E56CF; --ds:#4D6BFE;
-    --detail:#8A8A8A; --ok:#34D399; --bg:#0F1115; --card:#171A21; --line:#262B36;
+    --claude:#F2854D; --chatgpt:#3B9EFF; --glm:#6E56CF; --ds:#4D6BFE;
+    --detail:#8A8A8A; --bg:#0F1115; --card:#171A21; --line:#262B36;
     --txt:#E8EAEE; --dim:#9AA3B2;
     --mono:"Cascadia Mono","Consolas","Courier New",monospace;
     --sans:"Segoe UI","Microsoft YaHei",sans-serif;
@@ -44,13 +44,7 @@
   .row .bar i{display:block; height:24px; border-radius:12px; background:var(--c);}
   .row .detail{position:absolute; left:0; top:84px; width:300px; text-align:center;
                font-family:var(--mono); font-size:24px; color:var(--detail);}
-  .row .cost{position:absolute; left:0; top:112px; width:300px; text-align:center;
-             font-family:var(--mono); font-size:24px; color:var(--c);}
-  .ok-dot{display:inline-block; width:11px; height:11px; border-radius:50%; background:var(--ok);
-          margin-left:8px; vertical-align:6px; box-shadow:0 0 8px rgba(52,211,153,.7);}
   .row.dim{opacity:.45;}
-
-  /* 余额行（DeepSeek）：大字位显示余额，无进度条 */
   .row.bal .pct{letter-spacing:-.5px;}
 
   .legend{margin-top:26px; background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px 22px;}
@@ -70,14 +64,13 @@
   .state-row .name{font-size:17px; font-weight:600;}
   .state-row .pct{position:absolute; right:14px; top:10px; font-family:var(--mono); font-size:18px; font-weight:600;}
   .state-row .detail{margin-top:5px; font-family:var(--mono); font-size:14px; color:var(--detail);}
-  .state-row .cost{margin-top:4px; font-family:var(--mono); font-size:14px;}
   footer{margin-top:24px; font-size:11.5px; color:#5B6472; text-align:center;}
 </style>
 </head>
 <body>
 
 <header>
-  <h1>CC Island 表盘效果预览 · <em>Claude / Codex / GLM / DeepSeek</em></h1>
+  <h1>CC Island 表盘效果预览 · <em>Claude / ChatGPT / GLM / DeepSeek</em></h1>
   <p>Windows 移植方案 §5.5–§5.6 · payload v3 <code>{"c","x","g","ds"}</code> · 触摸翻页：第 1 页主用两家（现版布局零回归），第 2 页新增 GLM 窗口行 + DeepSeek 余额行 · 布局几何与颜色对应 <code>app_codex.cpp</code> 常量 · 示例数据仅供演示</p>
 </header>
 
@@ -85,50 +78,24 @@
 
   <!-- ================= 第 1 页 ================= -->
   <div class="watch-card">
-    <div class="page-label"><b>第 1 页 · Claude Code + Codex</b><span>现版两行布局，零回归</span></div>
+    <div class="page-label"><b>第 1 页 · Claude Code + ChatGPT</b><span>现版两行布局，零回归</span></div>
     <div class="watch-wrap">
       <div class="watch">
 
         <div class="row" style="--c:#F2854D; --ct:rgba(242,133,77,.30); top:83px;">
-          <svg class="logo" viewBox="-24 -24 48 48">
-            <g stroke="#F2854D" stroke-width="4.4" stroke-linecap="round">
-              <line x1="8.5" y1="0" x2="21" y2="0"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(30)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(60)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(90)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(120)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(150)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(180)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(210)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(240)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(270)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(300)"/>
-              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(330)"/>
-            </g>
-          </svg>
+          <img class="logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAFNklEQVR42tVaaYiWVRT+RqfcMi2xrKbSnIkg0yjHsUKjoFzAQpsyCUxbFSZtE4d2bYRK8kdK4q7Yj1KqH7aM5JoiWOGCFurIWOqoqC065tiMM1/nwPPC4XDPfZfv/froxwPDe8699zz3nnuW+03m7KxRmZj4gHCWcIAwj3BJjLGXEUoSrGki7oBHCW2ErMDLEccOIhwi/EN4slAE6pXxWXxrH2Hs92JMI+GqQhDY4iDAGBMyrq86Of67eyEIzDAIbA0ZN0zpHy+UC11HOGOQqPCMm6B0N4WscydhKWFZyLyZJKynGARWecZMU7oLPLojCE1Cdz+hU5oE2hF2Ogi0EPoYY2Yr3SmG3hDC3465306TAONeRzjNIi+49FcovSEOndsIfxqn+3wcAtWEC4QGwvuEYmPwKsdCPO4Gh+63QqeVcLmSc3I7YhjPG3V9VALljp3l+H2NY/CNhPOOBRc6dHcI+QEl60j4wTCeMSfOJS4zJjkOt4kSVpsR96XeSSH/TMmWeYzf6PEAJwHOqL8ak/ElfVXpdyYcdeiuEDqd1KlWC1mVx/gjUbK162N/hC5r4s9VFn3KoXORcItxqsPwfShOy7UG10t355LIeGc/NiJNFkXZYBFWdzt0PoX8PvW9F+FqwjHPJk1NKxOPJvxuLMK7N51QRHjQIedo04/wmLpLTHhdyAmnWkpwCFvrWbAWvlrrkM0nTFaXcrZnrvq4RV6c5PUM4S9jYXaHWY7vvxHe9Bis/b4i38UcJ5yvIxokSUTReyOGHVcEnWDSUmKCJ+0nwUFCB8c6/O0OrDcHrtyA4MIbMy6XWrzE8PskeBiXux/C8gJk7+aQcd+l0VQ8hyY/qfG8m9sSzjExgwZ7HeI2x/4aNOoTsTNDsTO8410RNjWJ3mhSsnnGacIXyBO3sy28+OGYk7SgttmFC83F2zuEl1Qjkiu489uAsPs4MnqRKwoNR+rPFhhH4QVV2N12ccIoh6V7CCMJYwnPwo3eIrxHmIselSvJLwlf8QVCqb2d8EtIaWCBI9lHaHCK/4um3ocKT+0UBa0g1CBwGK66Hg3UfNzRJwJ3SsPwa3E6SdzwhNEDR8FmQo9cDO8MF2t0XPLWiEbsw0MAu+9raD3PxCCxJonhRQi9rkZmJ4q35hhG1Kmetz2yL79crMYpWWP3J3mN+MkxURN2sFQt+HNEEtxf3OxZl2VPo/08iFOayZVrVMPLEH3ajGdF7r66EPao+mZyjJM4iRfsKPYUR41CHItfMRIU+/4LIl5/okrjchRg8hleb8Aa1TA14mUulTDqKw/WQh7oTlLyafguS+8eSFS61C5XPTjfn/G5Eqg0osEfqJH0Q2yT6tCClF8nTqQIl/WcmnMJEul6lRNezIVAvdGr9lJ6VyrdY+Ip5FKE1CwSUjDmdUc1OhwNykL1fUZSAjtUI15p3I9a9ZRyv5APFLIfxXcmtleRYILdBEF5V+YaFbCXQE/udgh3oYR26byrjJip5JPUZdVlh87ci4X8EdXxrbRqpaRZ+CGVbTc7fidbIuSLHHN8aLhSIL9J5ZxFaREoU7tzCr/caL1dQqfGKEXqPK4U9MTzQG5fGgR0smoWT4UZ9R7aIvSqPD9o+FwpwEjjcTk2geXq0o4z9AYroyo9c9Y4XKljPvqBgSI6tOGSWrpVEX6RkWXBdqVfmg8CD4jjrg7RXakMKgvRLxWvEk2OfJNaR3YriITp6cvZNeI70wiUHAVpKeVPRvJinsvDGnklkEHiCgjs/T8SKMH/VXxDGJBPAv8CqW1zoqvsFdgAAAAASUVORK5CYII=" alt="">
           <span class="name">Claude</span>
           <span class="pct">27%</span>
           <div class="bar"><i style="width:27%"></i></div>
           <div class="detail">7d 18%&nbsp;&nbsp;reset 2h41m</div>
-          <div class="cost">$4.83&nbsp;&nbsp;1.2M</div>
         </div>
 
         <div class="row" style="--c:#3B9EFF; --ct:rgba(59,158,255,.30); top:243px;">
-          <svg class="logo" viewBox="-24 -24 48 48">
-            <g stroke="#3B9EFF" stroke-width="6.5" stroke-linecap="round">
-              <line x1="9" y1="0" x2="20" y2="0"/>
-              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(60)"/>
-              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(120)"/>
-              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(180)"/>
-              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(240)"/>
-              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(300)"/>
-            </g>
-          </svg>
-          <span class="name">Codex</span>
+          <img class="logo" src="data:image/png;base64,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" alt="">
+          <span class="name">ChatGPT</span>
           <span class="pct">9%</span>
           <div class="bar"><i style="width:9%"></i></div>
           <div class="detail">7d 31%&nbsp;&nbsp;reset 4h12m</div>
-          <div class="cost">$0.52&nbsp;&nbsp;318.4K</div>
         </div>
 
       </div>
@@ -136,9 +103,9 @@
     <div class="dots"><i class="on"></i><i></i></div>
     <div class="caption">
       <span><b>大百分比 + 进度条</b> = 5h 窗口用量 <code>h</code></span>
-      <span><b>品牌色</b> = kClaudeColor / kCodexColor</span>
+      <span><b>品牌色</b> = kClaudeColor / kChatgptColor</span>
       <span><b>灰色行</b> = 7d 用量 <code>d</code> + reset 倒计时 <code>r</code></span>
-      <span><b>品牌色行</b> = 今日花费 <code>$</code> + tokens <code>t</code></span>
+      <span><b>花费/tokens 行</b>已按需求移除</span>
     </div>
   </div>
 
@@ -149,33 +116,27 @@
       <div class="watch">
 
         <div class="row" style="--c:#6E56CF; --ct:rgba(110,86,207,.30); top:83px;">
-          <img class="logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHkAAABoCAMAAADirq9FAAAAPFBMVEVHcEz///////////////////////////////////////////////////////////////////////////+PybD1AAAAE3RSTlMA70Bvn2B/3yCAEJBwv6+PUDDPS578hAAAATtJREFUaN7t2t1ugkAURWH5c4ACauf937VJ06moV2dtOonpPveHJZBPSPR0+p8zZT5tOciWYnMTy1MJn9EiL6cSHtkiLjfjT3hObBGXl3LKF7hIy30JD3QRllO51mOCi7R8LfsrlQjLIiheVkHxsgoKl2VQtPwhg4Ll3zAH9T1L7CmzTvd1DkocAZQ2CihtEpQojwRKGQ2UcpM1UMJs9NFmUAZlUAZlUAb1p6D64CkPR4U7+npsUO/z5XUNhjeDMiiDMiiDMqgqoNpgeDWoNwTVBK/1bFAGZVAGZVAGZVAGZVAGZVAGZVBxUPMS/OfjchCoLviRn0lgUNHF5zIG1WatjEFFF1/KGFSftTL+za/LWhmDGhuxjEGlrJVrgno4wC2496mA2pfrgtqX64LalTGoIWvl2qCOfYlC8wVuwdhr5LAzqAAAAABJRU5ErkJggg=="
-               alt="GLM" style="width:48px;height:41px;margin-top:4px">
+          <img class="logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAACpUlEQVR42tWaTUhUYRSGv9JmYDLCFBmznWRJmyAIAt0MA4p7RYPSBtxItG9RkinU1kUgkmircKe4LH+WhSL0Qz+QtUkpBK2M0maa3gNn4Pox2syd8wYtns2dyz3ve+93z3fOueOudSxX/QMOARcgBiotkItlyayA+oB4CfwYfLWAbeA76AyILwNDljGYBjJg2Fs+bWrqvzCwCOIB8TXgvXUcR1w6FwLiD4KHjKfMMPALXPWyTp8et4zzG0zLxZ8YMgW6PPHnwBrhRn0Ajc4LZs1RsEAQvw0uSgym+HIwqNnI2sCovldUAy262ViLfwOO5eKwxFeDd6SlE8xuFAOy204SxKfBdXCAbaCXtLfMgMN+PGvxZ8EnUso8ky+mpfgjYI4g/ifo3iuulXhJaXd0nVrvtiN5+glzA0mwQbj7r72CkGKgFrwliN8B5/8Wv1TxUTBB6iVuFqKhVAM9hCpTeKRJgWqggbTuP0qVWaiOsOJlQ5kliP8BUsVoCWugn5Ays/o+RdgGWsEWQfxzLQId00AdeEkQL2V3IsxqKDZljpEKtf6wyaSYk69oXWItfl5HjVQDkjI/E8Svg1Ol7EWFnBQhNeY7+lQd28AtgnipMu8XmzLDGEiSUuYzcNyiEt7vxxMayFr8hk4sHNNAVB9xhtCYD+RmOkwDKVLKnMvXmFsbOK0VobX4L+Ck9RTEP1BBasylZ7jEGKL5BwZIpcKYzkqpBpp1c7EW/0L7Zsc0ECdVmZuWKXMvAzLLHCekzIzu4mVeWdIE2q1wOvXaJtz9Ba/KlF7iqbaNaSsc6fPPqldlxvTjtnmCYHzkS3tVpozDb5B6aIqBB16pkCCNXygGXnlVpqz7JebfGSwNfPNSpkyU75E+8u0ycNeIy17KlL3ltuH18/IHPDBU2GsuqWcAAAAASUVORK5CYII=" alt="">
           <span class="name">GLM</span>
           <span class="pct">44%</span>
           <div class="bar"><i style="width:44%"></i></div>
           <div class="detail">7d 53%&nbsp;&nbsp;reset ?</div>
-          <div class="cost">$0.00&nbsp;&nbsp;78.9K</div>
         </div>
 
         <div class="row bal" style="--c:#4D6BFE; top:243px;">
-          <svg class="logo" viewBox="0 0 50 50">
-            <path fill="#4D6BFE" fill-rule="nonzero" d="M48.8354 10.0479C48.3232 9.79199 48.1025 10.2798 47.8032 10.5278C47.7007 10.6079 47.6143 10.7119 47.5273 10.8076C46.7793 11.624 45.9048 12.1597 44.7622 12.0957C43.0923 12 41.666 12.5356 40.4058 13.8398C40.1377 12.2319 39.2476 11.272 37.8926 10.6558C37.1836 10.3359 36.4668 10.0156 35.9702 9.31982C35.6235 8.82373 35.5293 8.27197 35.356 7.72754C35.2456 7.3999 35.1353 7.06396 34.7651 7.00781C34.3633 6.94385 34.2056 7.2876 34.0479 7.57568C33.418 8.75195 33.1733 10.0479 33.1973 11.3599C33.2524 14.312 34.4736 16.6641 36.8999 18.3359C37.1758 18.5278 37.2466 18.7197 37.1597 19C36.9946 19.5757 36.7974 20.1357 36.624 20.7119C36.5137 21.0801 36.3486 21.1597 35.9624 21C34.6309 20.4321 33.481 19.5918 32.4644 18.5757C30.7393 16.8721 29.1792 14.9917 27.2334 13.52C26.7764 13.1758 26.3193 12.856 25.8467 12.5518C23.8618 10.584 26.1069 8.96777 26.627 8.77588C27.1704 8.57568 26.8159 7.8877 25.0591 7.896C23.3022 7.90381 21.6953 8.50391 19.647 9.30371C19.3477 9.42383 19.0322 9.51172 18.7095 9.58398C16.8501 9.22363 14.9199 9.14355 12.9033 9.37598C9.10596 9.80762 6.07275 11.6396 3.84326 14.7681C1.16455 18.5278 0.53418 22.7998 1.30664 27.2559C2.11768 31.9521 4.46582 35.8398 8.07373 38.8799C11.8159 42.0322 16.1255 43.5762 21.041 43.2803C24.0269 43.104 27.3516 42.6963 31.1016 39.4561C32.0469 39.936 33.0396 40.1279 34.686 40.272C35.9546 40.3921 37.1758 40.208 38.1211 40.0078C39.6021 39.688 39.4995 38.2881 38.9639 38.0322C34.623 35.9678 35.5762 36.8081 34.71 36.1279C36.9155 33.4639 40.2402 30.6958 41.54 21.728C41.6426 21.0161 41.5557 20.5679 41.54 19.9917C41.5322 19.6396 41.6108 19.5039 42.0049 19.4639C43.0923 19.3359 44.1479 19.0317 45.1167 18.4878C47.9292 16.9199 49.064 14.3438 49.3315 11.2559C49.3711 10.7837 49.3237 10.2959 48.8354 10.0479ZM24.3262 37.8398C20.1196 34.4639 18.0791 33.3521 17.2358 33.3999C16.4482 33.4482 16.5898 34.3682 16.7632 34.9678C16.9443 35.5601 17.1812 35.9683 17.5117 36.4878C17.7402 36.832 17.8979 37.3442 17.2832 37.728C15.9282 38.584 13.5728 37.4399 13.4624 37.3838C10.7207 35.7358 8.42822 33.5601 6.81348 30.584C5.25342 27.7197 4.34766 24.6479 4.19775 21.3677C4.1582 20.5757 4.38672 20.2959 5.15869 20.1519C6.17529 19.96 7.22314 19.9199 8.23926 20.0718C12.5327 20.7119 16.1885 22.6719 19.2529 25.7759C21.002 27.5439 22.3252 29.6558 23.6885 31.7202C25.1377 33.9121 26.6978 36 28.6831 37.7119C29.3843 38.312 29.9434 38.7681 30.479 39.104C28.8643 39.2881 26.1699 39.3281 24.3262 37.8398ZM26.3433 24.6001C26.3433 24.248 26.6191 23.9678 26.9658 23.9678C27.0444 23.9678 27.1152 23.9839 27.1782 24.0078C27.2651 24.04 27.3438 24.0879 27.4067 24.1602C27.5171 24.272 27.5801 24.4321 27.5801 24.6001C27.5801 24.9521 27.3042 25.2319 26.9575 25.2319C26.6108 25.2319 26.3433 24.9521 26.3433 24.6001ZM32.6064 27.8799C32.2046 28.0479 31.8027 28.1919 31.4165 28.208C30.8179 28.2397 30.1641 27.9922 29.8096 27.688C29.2583 27.2158 28.8643 26.9521 28.6987 26.1279C28.6279 25.7759 28.6675 25.2319 28.7305 24.9199C28.8721 24.248 28.7144 23.8159 28.2495 23.4238C27.8716 23.104 27.3911 23.0161 26.8633 23.0161C26.666 23.0161 26.4849 22.9277 26.3511 22.856C26.1304 22.7441 25.9492 22.4639 26.1226 22.1201C26.1777 22.0078 26.4458 21.7358 26.5088 21.688C27.2256 21.272 28.0527 21.4077 28.8169 21.7197C29.5259 22.0161 30.0615 22.5601 30.834 23.3281C31.6216 24.2559 31.7632 24.5117 32.2124 25.208C32.5669 25.752 32.8901 26.312 33.1104 26.9521C33.2446 27.3521 33.0713 27.6802 32.6064 27.8799Z"/>
-          </svg>
-          <span class="name">DeepSeek<span class="ok-dot"></span></span>
+          <img class="logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAADtUlEQVR42u2ZW2xMURSGZ5iW0WgJqWpRl0RpxHhAqIRUtG8lxCUeiMtQURIhfXNLxHXiwS0hkiI8CHG/RDRCIqlQtHgpOppGNYRUtOoydGqtZB3Z2fbZZ+9zzow2OQ9fOp1Za531nzl777XW+ErK4r7ujM8T4AnwBHgCnNITGNvVBKQBhUAYWA3kSWzXAi1ASrIEBIBBQC79DTDvzwMuA9+BTgJfr5LEe0p2JYkSkArMB84A9cBvJrlO+r8B+MS9b7BEErsP0EF2TcAUjeTnAEGZgZ8egXcmianST3KNXM4WxVwHRlkkv53sF5oZ9AduOUzcYKUkkSwTnw/AELLpDRRTnHXAHcauWBR0APDcpeSRn8BmoIfgWvhem4nfQbzDwHuTz+N4A/iAuBPcdzF5FvxGMwQibpjYt1KSZvFqRYt4d4KSZy+ayV1zts1YpbyAfCCWYAHIC2AgJ+KmZoxqY/tmg5xLQvIGT7jdCTeNGkXfV8wC/ysgG/iVRAFIFdCXEYGvr0jscYs9SWL/OcjWJzl5g0fAYCahNdznMXoyyoGRspP4IuMUAWYC4+lkXAYcAV4mSARuk4vp4OTPnibVUiLKOAUlDhNIzFfNJJ8BR4HHEpuooExpVhHg53afbIU6BIu440wdY0UO47tCY7erUhEQ5Jx0CqoZwFuFRNpo6wuR3wJF8cdUBKRyTmHNkjaT7pQsEYx5gh4jwy+iICCsugbaGacKG3U5fouVkkSaad3sYnywSHttISBPVUAdt/L9NkRgbf/AIqGrnM9Sie0bnYbmAuc83WYrmWXRP2BxtofEYuG4UWIb0RFQzjmfdtAPFyos0B/ANwuh43QEhAQ1/DAHIvY7PNxu2+mJ67ggFQ4EBB2c3Hj3p9oRsEFQPBU4EDFNcLKqcMruVCKNelE2WL1FU25FRDP5Rr7a1B2rlAqCVtJhZzZVi1IxGDIZyVQrJo+LerLTuRDu/3cFwa9Jijyj6cZ+Yi/Qi/t8OPDRIvkOKi9cGWzl0MnJX+QhMFRgv03Q944RrId2iYBDbs9GJwJfBBdqof6APanTBdMDnCgs4mLOkpTh+A3co74g4NZosYASNqvdDwNbTB45Yzs8wLWNkxQmfY00D3JlNpqvUHBZ8ZnmqpuA5cBWhZnPWTeHuxlUWsRdaiEb6BEdTaN1nMCdBy5R/V+ms3XrLJgiZhRuhxglm/6/f6Epoq+4VeNw2geM6Go/MaXQwYNd0w5asHiHd1JZMldhTO79yOcJ8AR4Arq5gD+ypJC9b27GeQAAAABJRU5ErkJggg==" alt="">
+          <span class="name">DeepSeek</span>
           <span class="pct">¥110.00</span>
-          <div class="detail">赠金 ¥10.00&nbsp;&nbsp;·&nbsp;&nbsp;$2.50</div>
-          <div class="cost">今日 34.5K tok</div>
         </div>
 
       </div>
     </div>
     <div class="dots"><i></i><i class="on"></i></div>
     <div class="caption">
-      <span><b>GLM 行</b>：复用窗口行组件，<code>g</code> = h/d/r/$/t（reset 缺字段 → 显示 <code>reset ?</code>）</span>
-      <span><b>绿色圆点</b> = <code>ds.ok</code>（is_available，可正常调用）</span>
+      <span><b>GLM 行</b>：复用窗口行组件，<code>g</code> = h/d/r（reset 缺字段 → 显示 <code>reset ?</code>）</span>
+      <span><b>GLM logo</b>：官方 Z 标，着 kGlmColor 紫色</span>
       <span><b>大字余额</b> = <code>bal</code> + <code>cur</code>（CNY→¥ / USD→$），无进度条</span>
-      <span><b>灰色行</b> = 赠金 <code>gnt</code> + 第二币种 <code>x_cur/x_bal</code>；<b>品牌色行</b> = 今日 tokens <code>t</code></span>
+      <span><b>ok 圆点 / 赠金 / tokens 行</b>已按需求移除</span>
     </div>
   </div>
 
@@ -187,20 +148,18 @@
     <table>
       <tr><th>键</th><th>提供商</th><th>结构</th><th>表盘呈现</th></tr>
       <tr><td><code>c</code></td><td><span class="sw" style="background:#F2854D"></span>Claude Code</td>
-          <td><code>{h,d,r,$,t}</code></td><td>第 1 页上行 · 窗口行</td></tr>
-      <tr><td><code>x</code></td><td><span class="sw" style="background:#3B9EFF"></span>Codex</td>
-          <td><code>{h,d,r,$,t}</code></td><td>第 1 页下行 · 窗口行</td></tr>
+          <td><code>{h,d,r}</code></td><td>第 1 页上行 · 窗口行</td></tr>
+      <tr><td><code>x</code></td><td><span class="sw" style="background:#3B9EFF"></span>ChatGPT</td>
+          <td><code>{h,d,r}</code></td><td>第 1 页下行 · 窗口行</td></tr>
       <tr><td><code>g</code></td><td><span class="sw" style="background:#6E56CF"></span>GLM</td>
-          <td><code>{h,d,r,$,t}</code></td><td>第 2 页上行 · 窗口行（未配置则省略键 → 显示 --）</td></tr>
+          <td><code>{h,d,r}</code></td><td>第 2 页上行 · 窗口行（未配置则省略键 → 显示 --）</td></tr>
       <tr><td><code>ds</code></td><td><span class="sw" style="background:#4D6BFE"></span>DeepSeek</td>
-          <td><code>{ok,cur,bal,gnt,x_cur,x_bal,t}</code></td><td>第 2 页下行 · 余额行（同上）</td></tr>
+          <td><code>{cur,bal}</code></td><td>第 2 页下行 · 余额行（同上）</td></tr>
     </table>
     <table>
       <tr><th>字段</th><th>含义</th><th>数据来源</th></tr>
       <tr><td><code>h / d / r</code></td><td>5h 窗口% / 7d 窗口% / 重置倒计时(分)</td><td>各家 usage 端点（GLM 无 reset 字段 → r=0 → "reset ?"）</td></tr>
-      <tr><td><code>$ / t</code></td><td>今日花费 / 今日 tokens</td><td>本地会话日志按模型名归因（订阅制花费计 0）</td></tr>
-      <tr><td><code>ok / bal / gnt</code></td><td>可用态 / 总余额 / 赠金</td><td>DeepSeek <code>/user/balance</code>（金额字符串 → float）</td></tr>
-      <tr><td><code>x_cur / x_bal</code></td><td>第二币种余额（可选）</td><td><code>balance_infos[]</code> 多币种数组</td></tr>
+      <tr><td><code>cur / bal</code></td><td>币种 / 总可用余额</td><td>DeepSeek <code>/user/balance</code>（金额字符串 → float，CNY 优先）</td></tr>
     </table>
   </div>
 </section>
@@ -221,7 +180,6 @@
         <span class="name" style="color:#6E56CF;">GLM</span>
         <span class="pct" style="color:#6E56CF;">44%</span>
         <div class="detail">7d 53%&nbsp;&nbsp;reset ?</div>
-        <div class="cost" style="color:#6E56CF;">$0.00&nbsp;&nbsp;78.9K</div>
       </div>
       <p>reset ?：GLM 监控端点无重置字段时，倒计时位置显示 "?"（不再渲染成 0h00m）</p>
     </div>
@@ -229,15 +187,13 @@
       <div class="state-row">
         <span class="name" style="color:#4D6BFE; opacity:.5;">DeepSeek</span>
         <span class="pct" style="color:#F59E0B;">¥38.20</span>
-        <div class="detail" style="opacity:.5;">赠金 ¥0.00</div>
-        <div class="cost" style="color:#4D6BFE; opacity:.5;">今日 12.1K tok</div>
       </div>
       <p>低余额：跌破 kDsLowBalanceCny(50) 首次振动一次，行降亮度、余额数字转琥珀色</p>
     </div>
   </div>
 </section>
 
-<footer>CC Island · Windows 移植技术方案（docs/windows-port-design.zh-CN.md）表盘效果预览 · 由 docs/mockup.html 渲染 · 品牌 Logo 为示意简化图形，仅用于标识对应服务</footer>
+<footer>CC Island · Windows 移植技术方案（docs/windows-port-design.zh-CN.md）表盘效果预览 · 由 docs/mockup.html 渲染 · 品牌 Logo 为官方标，仅用于标识对应服务</footer>
 
 </body>
 </html>

@@ -19,12 +19,11 @@ using namespace mooncake;
 using namespace smooth_ui_toolkit::lvgl_cpp;
 
 // Brand accent colors
-static constexpr uint32_t kClaudeColor = 0xF2854D;  // vivid orange (Anthropic-ish)
-static constexpr uint32_t kCodexColor  = 0x3B9EFF;  // vivid blue
-static constexpr uint32_t kGlmColor    = 0x6E56CF;  // violet (kept apart from Codex blue)
-static constexpr uint32_t kDsColor     = 0x4D6BFE;  // DeepSeek blue
-static constexpr uint32_t kOkColor     = 0x34D399;  // green "callable" dot
-static constexpr uint32_t kDetailColor = 0x8A8A8A;  // muted text
+static constexpr uint32_t kClaudeColor   = 0xF2854D;  // vivid orange (Anthropic-ish)
+static constexpr uint32_t kChatgptColor  = 0x3B9EFF;  // vivid blue
+static constexpr uint32_t kGlmColor      = 0x6E56CF;  // violet (kept apart from ChatGPT blue)
+static constexpr uint32_t kDeepseekColor = 0x4D6BFE;  // DeepSeek blue
+static constexpr uint32_t kDetailColor   = 0x8A8A8A;  // muted text
 
 // 5h-window utilization that triggers a haptic alert when first crossed.
 static constexpr int kAlertThreshold = 80;
@@ -33,16 +32,6 @@ static constexpr int kAlertThreshold = 80;
 static constexpr double kDsLowBalanceCny = 50.0;
 
 namespace {
-
-void fmt_tokens(char* buf, int sz, long t)
-{
-    if (t >= 1000000)
-        std::snprintf(buf, sz, "%.1fM", t / 1e6);
-    else if (t >= 1000)
-        std::snprintf(buf, sz, "%.0fK", t / 1e3);
-    else
-        std::snprintf(buf, sz, "%ld", t);
-}
 
 // cJSON helpers ------------------------------------------------------------- //
 const char* jstr(cJSON* obj, const char* key, const char* dflt)
@@ -64,7 +53,6 @@ struct ProviderRow {
     lv_obj_t* bar    = nullptr;
     lv_obj_t* pct5h  = nullptr;
     lv_obj_t* detail = nullptr;  // "7d N%  reset HhMMm"
-    lv_obj_t* cost   = nullptr;  // "$X.XX  N.NM"
     int last_p5h     = -1;       // for threshold-crossing haptics
 
     void set_dim(bool dim)
@@ -79,11 +67,10 @@ struct ProviderRow {
         if (bar) lv_bar_set_value(bar, 0, LV_ANIM_OFF);
         if (pct5h) lv_label_set_text(pct5h, "--");
         if (detail) lv_label_set_text(detail, "no data");
-        if (cost) lv_label_set_text(cost, "");
         last_p5h = -1;
     }
 
-    void apply(int p5h, int p7d, int reset5hMin, double costUsd, long tokens)
+    void apply(int p5h, int p7d, int reset5hMin)
     {
         set_dim(false);
         if (bar) lv_bar_set_value(bar, p5h, LV_ANIM_OFF);
@@ -103,13 +90,6 @@ struct ProviderRow {
                 std::snprintf(b, sizeof(b), "7d %d%%  reset ?", p7d);
             lv_label_set_text(detail, b);
         }
-        if (cost) {
-            char tok[12];
-            fmt_tokens(tok, sizeof(tok), tokens);
-            char b[32];
-            std::snprintf(b, sizeof(b), "$%.2f  %s", costUsd, tok);
-            lv_label_set_text(cost, b);
-        }
     }
 };
 
@@ -117,13 +97,9 @@ struct ProviderRow {
 // Strings are kept ASCII — the factory firmware font subsets are not
 // guaranteed to carry CJK/currency glyphs.
 struct DsRow {
-    lv_obj_t* cont   = nullptr;
-    lv_obj_t* ok_dot = nullptr;  // green when is_available
-    lv_obj_t* bal    = nullptr;  // "110.00 CNY"
-    lv_obj_t* detail = nullptr;  // "grant 10.00  +2.50 USD"
-    lv_obj_t* cost   = nullptr;  // "today 34.5K tok"
-    double last_bal  = -1;
-    bool last_ok     = true;
+    lv_obj_t* cont = nullptr;
+    lv_obj_t* bal  = nullptr;  // "110.00 CNY"
+    double last_bal = -1;
 
     void set_dim(bool dim)
     {
@@ -134,45 +110,22 @@ struct DsRow {
     {
         set_dim(true);
         if (bal) lv_label_set_text(bal, "--");
-        if (detail) lv_label_set_text(detail, "no data");
-        if (cost) lv_label_set_text(cost, "");
-        if (ok_dot) lv_obj_set_style_bg_color(ok_dot, lv_color_hex(kDetailColor), 0);
         last_bal = -1;
-        last_ok = true;
     }
 
     // Returns true when the low-balance alert fires (first crossing below
-    // kDsLowBalanceCny, or is_available dropping out).
-    bool apply(bool ok, const char* cur, double balance, double granted,
-               const char* x_cur, double x_bal, long tokens)
+    // kDsLowBalanceCny).
+    bool apply(const char* cur, double balance)
     {
-        set_dim(!ok);
-        if (ok_dot) lv_obj_set_style_bg_color(ok_dot, lv_color_hex(ok ? kOkColor : kDetailColor), 0);
+        set_dim(false);
         if (bal) {
             char b[24];
             std::snprintf(b, sizeof(b), "%.2f %s", balance, cur ? cur : "CNY");
             lv_label_set_text(bal, b);
         }
-        if (detail) {
-            char b[48];
-            if (x_cur && x_cur[0] && x_bal > 0)
-                std::snprintf(b, sizeof(b), "grant %.2f  +%.2f %s", granted, x_bal, x_cur);
-            else
-                std::snprintf(b, sizeof(b), "grant %.2f", granted);
-            lv_label_set_text(detail, b);
-        }
-        if (cost) {
-            char tok[12];
-            fmt_tokens(tok, sizeof(tok), tokens);
-            char b[32];
-            std::snprintf(b, sizeof(b), "today %s tok", tok);
-            lv_label_set_text(cost, b);
-        }
 
-        bool crossed = (last_bal >= 0 && last_bal >= kDsLowBalanceCny && balance < kDsLowBalanceCny) ||
-                       (last_ok && !ok);
+        bool crossed = (last_bal >= 0 && last_bal >= kDsLowBalanceCny && balance < kDsLowBalanceCny);
         last_bal = balance;
-        last_ok = ok;
         return crossed;
     }
 };
@@ -183,7 +136,7 @@ lv_obj_t* s_page2 = nullptr;
 // Persists across app open/close within a boot ("glance at page 2 again").
 int s_page = 0;
 ProviderRow s_claude;
-ProviderRow s_codex;
+ProviderRow s_chatgpt;
 ProviderRow s_glm;
 DsRow s_ds;
 
@@ -229,7 +182,7 @@ lv_obj_t* make_row_container(lv_obj_t* parent, int y_center)
     return cont;
 }
 
-// Build one provider row inside `parent`, vertically centered at y_center.
+// Build one window row inside `parent`, vertically centered at y_center.
 ProviderRow build_row(lv_obj_t* parent, int y_center, const lv_image_dsc_t* logo, const char* name, uint32_t color)
 {
     ProviderRow row;
@@ -274,12 +227,6 @@ ProviderRow build_row(lv_obj_t* parent, int y_center, const lv_image_dsc_t* logo
     lv_obj_set_style_text_color(row.detail, lv_color_hex(kDetailColor), 0);
     lv_obj_align(row.detail, LV_ALIGN_TOP_MID, 0, 84);
 
-    // today cost + tokens line
-    row.cost = lv_label_create(cont);
-    lv_obj_set_style_text_font(row.cost, &lv_font_maple_mono_medium_24, 0);
-    lv_obj_set_style_text_color(row.cost, lv_color_hex(color), 0);
-    lv_obj_align(row.cost, LV_ALIGN_TOP_MID, 0, 112);
-
     return row;
 }
 
@@ -301,34 +248,11 @@ DsRow build_bal_row(lv_obj_t* parent, int y_center, const lv_image_dsc_t* logo, 
     lv_obj_set_style_text_color(name_lbl, lv_color_hex(color), 0);
     lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 56, 8);
 
-    // is_available dot, tucked under the name where the bar would start
-    row.ok_dot = lv_obj_create(cont);
-    lv_obj_set_size(row.ok_dot, 12, 12);
-    lv_obj_align(row.ok_dot, LV_ALIGN_TOP_LEFT, 58, 44);
-    lv_obj_set_style_radius(row.ok_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(row.ok_dot, 0, 0);
-    lv_obj_set_style_bg_color(row.ok_dot, lv_color_hex(kOkColor), 0);
-    lv_obj_set_style_shadow_width(row.ok_dot, 0, 0);
-    lv_obj_remove_flag(row.ok_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(row.ok_dot, LV_OBJ_FLAG_EVENT_BUBBLE);
-
     // Big balance (right aligned): "110.00 CNY"
     row.bal = lv_label_create(cont);
     lv_obj_set_style_text_font(row.bal, &lv_font_maple_mono_medium_28, 0);
     lv_obj_set_style_text_color(row.bal, lv_color_hex(color), 0);
     lv_obj_align(row.bal, LV_ALIGN_TOP_RIGHT, 0, 6);
-
-    // granted (+ second currency) line
-    row.detail = lv_label_create(cont);
-    lv_obj_set_style_text_font(row.detail, &lv_font_maple_mono_medium_24, 0);
-    lv_obj_set_style_text_color(row.detail, lv_color_hex(kDetailColor), 0);
-    lv_obj_align(row.detail, LV_ALIGN_TOP_MID, 0, 84);
-
-    // today tokens line
-    row.cost = lv_label_create(cont);
-    lv_obj_set_style_text_font(row.cost, &lv_font_maple_mono_medium_24, 0);
-    lv_obj_set_style_text_color(row.cost, lv_color_hex(color), 0);
-    lv_obj_align(row.cost, LV_ALIGN_TOP_MID, 0, 112);
 
     return row;
 }
@@ -341,15 +265,9 @@ bool update_from_json(ProviderRow& row, cJSON* obj)
     int h = static_cast<int>(jdbl(obj, "h", 0));
     int d = static_cast<int>(jdbl(obj, "d", 0));
     int r = static_cast<int>(jdbl(obj, "r", 0));
-    double cost = jdbl(obj, "$", 0);
-    long tok = static_cast<long>(jdbl(obj, "t", 0));
 
-    bool crossed = false;
-    {
-        LvglLockGuard lock;
-        row.apply(h, d, r, cost, tok);
-    }
-    crossed = (row.last_p5h >= 0 && row.last_p5h < kAlertThreshold && h >= kAlertThreshold);
+    row.apply(h, d, r);
+    bool crossed = (row.last_p5h >= 0 && row.last_p5h < kAlertThreshold && h >= kAlertThreshold);
     row.last_p5h = h;
     return crossed;
 }
@@ -358,18 +276,13 @@ bool update_from_json(ProviderRow& row, cJSON* obj)
 bool update_ds_from_json(DsRow& row, cJSON* obj)
 {
     if (!cJSON_IsObject(obj)) return false;
-    bool ok = jdbl(obj, "ok", 1) != 0;
     const char* cur = jstr(obj, "cur", "CNY");
     double bal = jdbl(obj, "bal", 0);
-    double gnt = jdbl(obj, "gnt", 0);
-    const char* x_cur = jstr(obj, "x_cur", nullptr);
-    double x_bal = jdbl(obj, "x_bal", 0);
-    long tok = static_cast<long>(jdbl(obj, "t", 0));
 
     bool crossed = false;
     {
         LvglLockGuard lock;
-        crossed = row.apply(ok, cur, bal, gnt, x_cur, x_bal, tok);
+        crossed = row.apply(cur, bal);
     }
     return crossed;
 }
@@ -379,7 +292,7 @@ bool update_ds_from_json(DsRow& row, cJSON* obj)
 AppCodex::AppCodex()
 {
     setAppInfo().name = "CC Island";
-    setAppInfo().icon = (void*)&icon_codex;
+    setAppInfo().icon = (void*)&icon_chatgpt;
 }
 
 void AppCodex::onCreate()
@@ -407,7 +320,7 @@ void AppCodex::onOpen()
     lv_obj_set_style_radius(s_root, 0, 0);
     lv_obj_set_style_pad_all(s_root, 0, 0);
     lv_obj_remove_flag(s_root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(s_root, on_screen_click, LV_EVENT_CLICK, nullptr);
+    lv_obj_add_event_cb(s_root, on_screen_click, LV_EVENT_CLICKED, nullptr);
 
     auto make_page = [&]() {
         lv_obj_t* page = lv_obj_create(s_root);
@@ -423,16 +336,16 @@ void AppCodex::onOpen()
     s_page2 = make_page();
 
     // Page 1: the original two window rows (unchanged layout).
-    s_claude = build_row(s_page1, -80, &logo_claude, "Claude", kClaudeColor);
-    s_codex  = build_row(s_page1, 80, &logo_codex, "Codex", kCodexColor);
+    s_claude  = build_row(s_page1, -80, &logo_claude, "Claude", kClaudeColor);
+    s_chatgpt = build_row(s_page1, 80, &logo_chatgpt, "ChatGPT", kChatgptColor);
 
     // Page 2: GLM window row + DeepSeek balance row.
     s_glm = build_row(s_page2, -80, &logo_glm, "GLM", kGlmColor);
-    s_ds  = build_bal_row(s_page2, 80, &logo_deepseek, "DeepSeek", kDsColor);
+    s_ds  = build_bal_row(s_page2, 80, &logo_deepseek, "DeepSeek", kDeepseekColor);
 
     // Dimmed "--" placeholders until each provider's first BLE push arrives.
     s_claude.show_placeholder();
-    s_codex.show_placeholder();
+    s_chatgpt.show_placeholder();
     s_glm.show_placeholder();
     s_ds.show_placeholder();
     show_page(s_page);
@@ -460,7 +373,7 @@ void AppCodex::onRunning()
         cJSON* root = cJSON_Parse(line);
         if (root) {
             bool a = update_from_json(s_claude, cJSON_GetObjectItem(root, "c"));
-            bool b = update_from_json(s_codex, cJSON_GetObjectItem(root, "x"));
+            bool b = update_from_json(s_chatgpt, cJSON_GetObjectItem(root, "x"));
             bool g = update_from_json(s_glm, cJSON_GetObjectItem(root, "g"));
             bool d = update_ds_from_json(s_ds, cJSON_GetObjectItem(root, "ds"));
             cJSON_Delete(root);
@@ -484,7 +397,7 @@ void AppCodex::onClose()
     s_page2 = nullptr;
     // s_page intentionally survives: reopening the app shows the last page.
     s_claude = ProviderRow{};
-    s_codex = ProviderRow{};
+    s_chatgpt = ProviderRow{};
     s_glm = ProviderRow{};
     s_ds = DsRow{};
 }
