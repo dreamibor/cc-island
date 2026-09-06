@@ -38,6 +38,7 @@ import ssl
 import subprocess
 import sys
 import time
+import traceback
 import urllib.error
 import urllib.request
 
@@ -765,11 +766,17 @@ async def ble_loop(interval_s):
 
     async def connect_watch(dev):
         disconnected.clear()
+        _log(f"connecting to {dev.address}...")
         client = BleakClient(
             dev,
             disconnected_callback=lambda _client: disconnected.set(),
-            services=[NUS_SERVICE_UUID],
             timeout=20,
+            # A rebooted ESP32 can leave Windows' per-address GATT cache in a
+            # state where get_gatt_services fails with ERROR_BAD_COMMAND
+            # (0x80070016). Explicitly request an uncached, complete discovery
+            # instead of Bleak's get-services-for-UUID WinRT path: some Windows
+            # adapters reject that filtered query for this custom service.
+            winrt={"use_cached_services": False},
         )
         await client.connect()
         _log(f"connected to {dev.address}")
@@ -858,6 +865,17 @@ async def ble_loop(interval_s):
                     await push(client, "auto")
             except asyncio.TimeoutError:
                 await push(client, "auto")
+        except asyncio.CancelledError:
+            # asyncio.run() cancels this coroutine on Ctrl-C/system shutdown.
+            # Close the WinRT GATT session before propagating cancellation;
+            # otherwise Windows can keep a ghost connection that suppresses
+            # advertising and poisons the next bridge start.
+            try:
+                if client:
+                    await asyncio.shield(client.disconnect())
+            except Exception:
+                pass
+            raise
         except Exception as e:  # noqa: BLE001 — keep the loop alive across BLE hiccups
             _log("ble error: " + repr(e))
             try:
@@ -907,7 +925,15 @@ def main():
     if args.ble:
         import asyncio
         _log(f"BLE push every {args.ble:g} min (Ctrl-C to stop)")
-        asyncio.run(ble_loop(int(args.ble * 60)))
+        try:
+            asyncio.run(ble_loop(int(args.ble * 60)))
+        except KeyboardInterrupt:
+            _log("BLE bridge stopped")
+        except Exception:
+            # pythonw/Task Scheduler has no visible stderr. Preserve startup
+            # failures (imports, COM initialization, permissions) in --log-file.
+            _log("fatal BLE bridge error:\n" + traceback.format_exc())
+            raise
         return
 
     data = collect()

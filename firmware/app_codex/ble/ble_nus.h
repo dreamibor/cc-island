@@ -9,7 +9,10 @@
 
 // Bump whenever this component's GATT layout changes: the persisted BLE
 // address is rotated so Windows does not serve a stale cached database.
-static constexpr uint8_t kGattDbVersion = 1;
+// Version 2 also migrates devices that were paired while bonds were RAM-only.
+// Those Windows records can never reconnect after the watch loses the key, so
+// the first bond-persistent firmware must rotate the identity once.
+static constexpr uint8_t kGattDbVersion = 2;
 
 namespace ble_nus {
 

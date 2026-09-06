@@ -16,31 +16,38 @@ $repo   = Split-Path -Parent $PSScriptRoot
 $bridge = Join-Path $repo "bridge\codexisland_bridge.py"
 $log    = Join-Path $repo "bridge.log"
 
-# --- 1) Locate Python (python.org install on PATH; Store stub won't work) ----
-$py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+# --- 1) Locate Python (prefer a self-contained ESP-IDF environment) ----------
+$idfPython = Get-ChildItem -Path 'C:\Espressif\tools\python\*\venv\Scripts\python.exe' `
+    -File -ErrorAction SilentlyContinue |
+    Sort-Object FullName -Descending | Select-Object -First 1
+$py = if ($idfPython) { $idfPython.FullName } else { $null }
+if (-not $py) { $py = (Get-Command python.exe -ErrorAction SilentlyContinue).Source }
 if (-not $py) { $py = (Get-Command python3.exe -ErrorAction SilentlyContinue).Source }
 if (-not $py -or $py -like "*WindowsApps*") {
-    throw "Python not found. Install 64-bit Python 3.11+ from python.org and re-run."
+    throw "Python not found. Install 64-bit Python 3.11+ or ESP-IDF and re-run."
 }
 
 # --- 2) Dependencies (user level, same as the macOS script) -------------------
 # bleak: BLE on Win11 ships as 1.x (needs build 22000+); Win10 must stay on 0.22.x.
-& $py -m pip install --user --quiet --disable-pip-version-check certifi
+& $py -m pip install --quiet --disable-pip-version-check certifi
 $build = [Environment]::OSVersion.Version.Build
 if ($build -ge 22000) {
-    & $py -m pip install --user --quiet --disable-pip-version-check --upgrade bleak
+    & $py -m pip install --quiet --disable-pip-version-check --upgrade bleak
 } else {
     Write-Host "Windows 10 (build $build) detected: pinning bleak 0.22.x (bleak-winrt backend)."
-    & $py -m pip install --user --quiet --disable-pip-version-check "bleak==0.22.*"
+    & $py -m pip install --quiet --disable-pip-version-check "bleak==0.22.*"
 }
+if ($LASTEXITCODE -ne 0) { throw "Failed to install bridge dependencies into $py" }
 
-# --- 3) pythonw.exe = no console window; logs go to --log-file ---------------
+# --- 3) Use the matching no-console interpreter when it exists ----------------
+# It must come from the exact environment whose dependencies were installed;
+# using an unrelated sibling pythonw.exe can make Bleak disappear at runtime.
 $pyw = Join-Path (Split-Path $py) "pythonw.exe"
-if (-not (Test-Path $pyw)) { $pyw = $py }
+$runner = if (Test-Path $pyw) { $pyw } else { $py }
 
 # --- 4) Register the task: logon trigger, run forever, restart on failure ----
 # (Equivalent of the LaunchAgent's RunAtLoad + KeepAlive + ThrottleInterval.)
-$action   = New-ScheduledTaskAction -Execute $pyw `
+$action   = New-ScheduledTaskAction -Execute $runner `
               -Argument "-u `"$bridge`" --ble $IntervalMinutes --log-file `"$log`""
 $trigger  = New-ScheduledTaskTrigger -AtLogOn
 $settings = New-ScheduledTaskSettingsSet -RestartCount 999 `
