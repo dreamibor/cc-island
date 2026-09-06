@@ -37,6 +37,8 @@ cp "$REPO_ROOT"/firmware/app_codex/ble/ble_nus.h        "$TARGET/main/apps/app_c
 cp "$REPO_ROOT"/firmware/app_codex/ble/ble_nus.cpp      "$TARGET/main/apps/app_codex/ble/"
 cp "$REPO_ROOT"/firmware/assets/logo_claude.c           "$TARGET/main/assets/images/"
 cp "$REPO_ROOT"/firmware/assets/logo_codex.c            "$TARGET/main/assets/images/"
+cp "$REPO_ROOT"/firmware/assets/logo_glm.c              "$TARGET/main/assets/images/"
+cp "$REPO_ROOT"/firmware/assets/logo_deepseek.c         "$TARGET/main/assets/images/"
 cp "$REPO_ROOT"/firmware/assets/icon_codex.c            "$TARGET/main/assets/images/"
 
 # 4. Apply the small, idempotent edits to the factory sources.
@@ -71,12 +73,14 @@ insert_after("main/main.cpp",
              "GetMooncake().installApp(std::make_unique<AppSetup>());",
              "    GetMooncake().installApp(std::make_unique<AppCodex>());")
 
-# assets.h: declare the three images
+# assets.h: declare the images
 insert_after("main/assets/assets.h",
              "LV_IMG_DECLARE(icon_watch_face);",
              "LV_IMG_DECLARE(icon_codex);\n"
              "LV_IMG_DECLARE(logo_claude);\n"
-             "LV_IMG_DECLARE(logo_codex);")
+             "LV_IMG_DECLARE(logo_codex);\n"
+             "LV_IMG_DECLARE(logo_glm);\n"
+             "LV_IMG_DECLARE(logo_deepseek);")
 
 # sdkconfig.defaults: enable NimBLE
 sdk = root / "sdkconfig.defaults"

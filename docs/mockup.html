@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>CC Island 表盘效果预览 — 四提供商（Windows 移植方案）</title>
+<style>
+  :root{
+    --claude:#F2854D; --codex:#3B9EFF; --glm:#6E56CF; --ds:#4D6BFE;
+    --detail:#8A8A8A; --ok:#34D399; --bg:#0F1115; --card:#171A21; --line:#262B36;
+    --txt:#E8EAEE; --dim:#9AA3B2;
+    --mono:"Cascadia Mono","Consolas","Courier New",monospace;
+    --sans:"Segoe UI","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{background:var(--bg); color:var(--txt); font-family:var(--sans); padding:30px 36px 24px; width:1280px;}
+  header h1{font-size:27px; font-weight:650; letter-spacing:.5px;}
+  header h1 em{font-style:normal; color:var(--claude);}
+  header p{margin-top:7px; font-size:14px; color:var(--dim);}
+  header p code{font-family:var(--mono); font-size:12.5px; color:#C7CEDB; background:#1D222C; padding:1px 6px; border-radius:4px;}
+
+  .watches{display:flex; gap:44px; margin-top:24px; justify-content:center;}
+  .watch-card{background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px 20px 16px; width:576px;}
+  .page-label{display:flex; align-items:baseline; justify-content:space-between;}
+  .page-label b{font-size:17px;}
+  .page-label span{font-size:12.5px; color:var(--dim);}
+  .watch-wrap{display:flex; justify-content:center; margin-top:12px;}
+  .watch{width:466px; height:466px; border-radius:50%; background:#000; position:relative; overflow:hidden;
+         box-shadow:0 0 0 9px #23262e, 0 0 0 11px #0a0b0d, 0 14px 40px rgba(0,0,0,.55);}
+  .watch::after{content:""; position:absolute; inset:0; border-radius:50%;
+         background:radial-gradient(circle at 32% 24%, rgba(255,255,255,.055), rgba(255,255,255,0) 42%); pointer-events:none;}
+  .dots{display:flex; gap:8px; justify-content:center; margin-top:12px;}
+  .dots i{width:8px; height:8px; border-radius:50%; background:#333a47;}
+  .dots i.on{background:#cfd6e2;}
+  .caption{margin-top:12px; border-top:1px solid var(--line); padding-top:10px;
+           display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; font-size:12.5px; color:var(--dim);}
+  .caption b{color:#C7CEDB; font-weight:600;}
+
+  /* ------- 表盘行：几何参数对照 app_codex.cpp build_row() ------- */
+  .row{position:absolute; left:83px; width:300px; height:140px;}
+  .row .logo{position:absolute; left:0; top:2px; width:48px; height:48px;}
+  .row .name{position:absolute; left:56px; top:8px; font-size:26px; font-weight:600; color:var(--c);}
+  .row .pct{position:absolute; right:0; top:6px; font-family:var(--mono); font-size:28px; font-weight:600; color:var(--c);}
+  .row .bar{position:absolute; left:0; top:52px; width:300px; height:24px; border-radius:12px; background:var(--ct);}
+  .row .bar i{display:block; height:24px; border-radius:12px; background:var(--c);}
+  .row .detail{position:absolute; left:0; top:84px; width:300px; text-align:center;
+               font-family:var(--mono); font-size:24px; color:var(--detail);}
+  .row .cost{position:absolute; left:0; top:112px; width:300px; text-align:center;
+             font-family:var(--mono); font-size:24px; color:var(--c);}
+  .ok-dot{display:inline-block; width:11px; height:11px; border-radius:50%; background:var(--ok);
+          margin-left:8px; vertical-align:6px; box-shadow:0 0 8px rgba(52,211,153,.7);}
+  .row.dim{opacity:.45;}
+
+  /* 余额行（DeepSeek）：大字位显示余额，无进度条 */
+  .row.bal .pct{letter-spacing:-.5px;}
+
+  .legend{margin-top:26px; background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px 22px;}
+  .legend h2, .states h2{font-size:16.5px; margin-bottom:12px;}
+  .legend .cols{display:flex; gap:26px;}
+  table{border-collapse:collapse; font-size:12.5px; flex:1;}
+  th,td{border:1px solid var(--line); padding:5px 10px; text-align:left; vertical-align:top;}
+  th{background:#1D222C; color:#C7CEDB; font-weight:600; white-space:nowrap;}
+  td code{font-family:var(--mono); font-size:11.5px; color:#8FD3FF;}
+  td .sw{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px;}
+
+  .states{margin-top:26px;}
+  .state-cards{display:flex; gap:22px;}
+  .state-card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; flex:1;}
+  .state-row{position:relative; width:300px; height:96px; margin:0 auto; background:#000; border-radius:10px; padding:10px 14px;}
+  .state-card p{margin-top:9px; font-size:12px; color:var(--dim); text-align:center;}
+  .state-row .name{font-size:17px; font-weight:600;}
+  .state-row .pct{position:absolute; right:14px; top:10px; font-family:var(--mono); font-size:18px; font-weight:600;}
+  .state-row .detail{margin-top:5px; font-family:var(--mono); font-size:14px; color:var(--detail);}
+  .state-row .cost{margin-top:4px; font-family:var(--mono); font-size:14px;}
+  footer{margin-top:24px; font-size:11.5px; color:#5B6472; text-align:center;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>CC Island 表盘效果预览 · <em>Claude / Codex / GLM / DeepSeek</em></h1>
+  <p>Windows 移植方案 §5.5–§5.6 · payload v3 <code>{"c","x","g","ds"}</code> · 触摸翻页：第 1 页主用两家（现版布局零回归），第 2 页新增 GLM 窗口行 + DeepSeek 余额行 · 布局几何与颜色对应 <code>app_codex.cpp</code> 常量 · 示例数据仅供演示</p>
+</header>
+
+<section class="watches">
+
+  <!-- ================= 第 1 页 ================= -->
+  <div class="watch-card">
+    <div class="page-label"><b>第 1 页 · Claude Code + Codex</b><span>现版两行布局，零回归</span></div>
+    <div class="watch-wrap">
+      <div class="watch">
+
+        <div class="row" style="--c:#F2854D; --ct:rgba(242,133,77,.30); top:83px;">
+          <svg class="logo" viewBox="-24 -24 48 48">
+            <g stroke="#F2854D" stroke-width="4.4" stroke-linecap="round">
+              <line x1="8.5" y1="0" x2="21" y2="0"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(30)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(60)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(90)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(120)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(150)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(180)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(210)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(240)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(270)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(300)"/>
+              <line x1="8.5" y1="0" x2="21" y2="0" transform="rotate(330)"/>
+            </g>
+          </svg>
+          <span class="name">Claude</span>
+          <span class="pct">27%</span>
+          <div class="bar"><i style="width:27%"></i></div>
+          <div class="detail">7d 18%&nbsp;&nbsp;reset 2h41m</div>
+          <div class="cost">$4.83&nbsp;&nbsp;1.2M</div>
+        </div>
+
+        <div class="row" style="--c:#3B9EFF; --ct:rgba(59,158,255,.30); top:243px;">
+          <svg class="logo" viewBox="-24 -24 48 48">
+            <g stroke="#3B9EFF" stroke-width="6.5" stroke-linecap="round">
+              <line x1="9" y1="0" x2="20" y2="0"/>
+              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(60)"/>
+              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(120)"/>
+              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(180)"/>
+              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(240)"/>
+              <line x1="9" y1="0" x2="20" y2="0" transform="rotate(300)"/>
+            </g>
+          </svg>
+          <span class="name">Codex</span>
+          <span class="pct">9%</span>
+          <div class="bar"><i style="width:9%"></i></div>
+          <div class="detail">7d 31%&nbsp;&nbsp;reset 4h12m</div>
+          <div class="cost">$0.52&nbsp;&nbsp;318.4K</div>
+        </div>
+
+      </div>
+    </div>
+    <div class="dots"><i class="on"></i><i></i></div>
+    <div class="caption">
+      <span><b>大百分比 + 进度条</b> = 5h 窗口用量 <code>h</code></span>
+      <span><b>品牌色</b> = kClaudeColor / kCodexColor</span>
+      <span><b>灰色行</b> = 7d 用量 <code>d</code> + reset 倒计时 <code>r</code></span>
+      <span><b>品牌色行</b> = 今日花费 <code>$</code> + tokens <code>t</code></span>
+    </div>
+  </div>
+
+  <!-- ================= 第 2 页 ================= -->
+  <div class="watch-card">
+    <div class="page-label"><b>第 2 页 · GLM + DeepSeek</b><span>新增，触摸左右半区翻页</span></div>
+    <div class="watch-wrap">
+      <div class="watch">
+
+        <div class="row" style="--c:#6E56CF; --ct:rgba(110,86,207,.30); top:83px;">
+          <svg class="logo" viewBox="-24 -24 48 48">
+            <text x="0" y="17" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif"
+                  font-size="38" font-weight="800" fill="#6E56CF">Z</text>
+          </svg>
+          <span class="name">GLM</span>
+          <span class="pct">44%</span>
+          <div class="bar"><i style="width:44%"></i></div>
+          <div class="detail">7d 53%&nbsp;&nbsp;reset ?</div>
+          <div class="cost">$0.00&nbsp;&nbsp;78.9K</div>
+        </div>
+
+        <div class="row bal" style="--c:#4D6BFE; top:243px;">
+          <svg class="logo" viewBox="-24 -24 48 48">
+            <path fill="#4D6BFE" d="M 21 1
+              C 21 -7, 9 -13, -1 -11
+              C -11 -9, -17 -3, -18 3
+              C -21 -1, -24 -3, -26 -7
+              C -26 -2, -24 4, -20 6
+              C -24 8, -25 12, -24 15
+              C -20 12, -16 10, -13 9
+              C -6 13, 8 12, 15 7
+              C 18 5, 21 4, 21 1 Z"/>
+            <circle cx="10.5" cy="-1.5" r="1.7" fill="#0B1020"/>
+          </svg>
+          <span class="name">DeepSeek<span class="ok-dot"></span></span>
+          <span class="pct">¥110.00</span>
+          <div class="detail">赠金 ¥10.00&nbsp;&nbsp;·&nbsp;&nbsp;$2.50</div>
+          <div class="cost">今日 34.5K tok</div>
+        </div>
+
+      </div>
+    </div>
+    <div class="dots"><i></i><i class="on"></i></div>
+    <div class="caption">
+      <span><b>GLM 行</b>：复用窗口行组件，<code>g</code> = h/d/r/$/t（reset 缺字段 → 显示 <code>reset ?</code>）</span>
+      <span><b>绿色圆点</b> = <code>ds.ok</code>（is_available，可正常调用）</span>
+      <span><b>大字余额</b> = <code>bal</code> + <code>cur</code>（CNY→¥ / USD→$），无进度条</span>
+      <span><b>灰色行</b> = 赠金 <code>gnt</code> + 第二币种 <code>x_cur/x_bal</code>；<b>品牌色行</b> = 今日 tokens <code>t</code></span>
+    </div>
+  </div>
+
+</section>
+
+<section class="legend">
+  <h2>payload v3 字段 ↔ 表盘位置映射</h2>
+  <div class="cols">
+    <table>
+      <tr><th>键</th><th>提供商</th><th>结构</th><th>表盘呈现</th></tr>
+      <tr><td><code>c</code></td><td><span class="sw" style="background:#F2854D"></span>Claude Code</td>
+          <td><code>{h,d,r,$,t}</code></td><td>第 1 页上行 · 窗口行</td></tr>
+      <tr><td><code>x</code></td><td><span class="sw" style="background:#3B9EFF"></span>Codex</td>
+          <td><code>{h,d,r,$,t}</code></td><td>第 1 页下行 · 窗口行</td></tr>
+      <tr><td><code>g</code></td><td><span class="sw" style="background:#6E56CF"></span>GLM</td>
+          <td><code>{h,d,r,$,t}</code></td><td>第 2 页上行 · 窗口行（未配置则省略键 → 显示 --）</td></tr>
+      <tr><td><code>ds</code></td><td><span class="sw" style="background:#4D6BFE"></span>DeepSeek</td>
+          <td><code>{ok,cur,bal,gnt,x_cur,x_bal,t}</code></td><td>第 2 页下行 · 余额行（同上）</td></tr>
+    </table>
+    <table>
+      <tr><th>字段</th><th>含义</th><th>数据来源</th></tr>
+      <tr><td><code>h / d / r</code></td><td>5h 窗口% / 7d 窗口% / 重置倒计时(分)</td><td>各家 usage 端点（GLM 无 reset 字段 → r=0 → "reset ?"）</td></tr>
+      <tr><td><code>$ / t</code></td><td>今日花费 / 今日 tokens</td><td>本地会话日志按模型名归因（订阅制花费计 0）</td></tr>
+      <tr><td><code>ok / bal / gnt</code></td><td>可用态 / 总余额 / 赠金</td><td>DeepSeek <code>/user/balance</code>（金额字符串 → float）</td></tr>
+      <tr><td><code>x_cur / x_bal</code></td><td>第二币种余额（可选）</td><td><code>balance_infos[]</code> 多币种数组</td></tr>
+    </table>
+  </div>
+</section>
+
+<section class="states">
+  <h2>状态示例（窗口行与余额行的边界态）</h2>
+  <div class="state-cards">
+    <div class="state-card">
+      <div class="state-row">
+        <span class="name" style="color:#6E56CF; opacity:.45;">GLM</span>
+        <span class="pct" style="color:#6E56CF; opacity:.45;">--</span>
+        <div class="detail" style="opacity:.45;">未配置 API Key</div>
+      </div>
+      <p>未配置：bridge 省略该键，表盘整行降透明度显示 --（新固件 + 旧 bridge 同样落在此态）</p>
+    </div>
+    <div class="state-card">
+      <div class="state-row">
+        <span class="name" style="color:#6E56CF;">GLM</span>
+        <span class="pct" style="color:#6E56CF;">44%</span>
+        <div class="detail">7d 53%&nbsp;&nbsp;reset ?</div>
+        <div class="cost" style="color:#6E56CF;">$0.00&nbsp;&nbsp;78.9K</div>
+      </div>
+      <p>reset ?：GLM 监控端点无重置字段时，倒计时位置显示 "?"（不再渲染成 0h00m）</p>
+    </div>
+    <div class="state-card">
+      <div class="state-row">
+        <span class="name" style="color:#4D6BFE; opacity:.5;">DeepSeek</span>
+        <span class="pct" style="color:#F59E0B;">¥38.20</span>
+        <div class="detail" style="opacity:.5;">赠金 ¥0.00</div>
+        <div class="cost" style="color:#4D6BFE; opacity:.5;">今日 12.1K tok</div>
+      </div>
+      <p>低余额：跌破 kDsLowBalanceCny(50) 首次振动一次，行降亮度、余额数字转琥珀色</p>
+    </div>
+  </div>
+</section>
+
+<footer>CC Island · Windows 移植技术方案（docs/windows-port-design.zh-CN.md）表盘效果预览 · 由 docs/mockup.html 渲染 · 品牌 Logo 为示意简化图形，仅用于标识对应服务</footer>
+
+</body>
+</html>

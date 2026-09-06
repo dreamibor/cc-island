@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Simplified whale silhouette for the DeepSeek row (rendered black-on-white by
+     gen_icons.py, then tinted with kDsColor). Stand-in glyph, not the official
+     trademark asset; the white circle punches the eye hole in the coverage mask. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <path fill="#000000" d="M 45 25
+    C 45 17, 33 11, 23 13
+    C 13 15, 7 21, 6 27
+    C 3 23, 0 21, -2 17
+    C -2 22, 0 28, 4 30
+    C 0 32, -1 36, 0 39
+    C 4 36, 8 34, 11 33
+    C 18 37, 32 36, 39 31
+    C 43 29, 45 27, 45 25 Z"
+    transform="translate(2,0)"/>
+  <circle cx="36" cy="23" r="1.8" fill="#ffffff"/>
+</svg>

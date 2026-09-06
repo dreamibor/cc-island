@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
 """
-CodexIsland StopWatch bridge — Mac side (Phase 1: data only).
+CC Island bridge — macOS / Windows / Linux.
 
-Reads the same local credentials CodexIsland uses and queries the providers'
-own usage endpoints, then prints the combined Claude + Codex usage. No secrets
-ever leave this machine; later phases push the *computed* numbers to the
-StopWatch over BLE.
+Reads the credentials your CLIs already wrote, queries the providers' own
+usage/balance endpoints, computes cost from local session logs, and pushes one
+compact JSON line per update to the StopWatch over BLE (Nordic UART Service).
 
-Recipes mirror ericjypark/codex-island:
-  - Codex : GET chatgpt.com/backend-api/wham/usage with the access_token from
-            ~/.codex/auth.json.
-  - Claude: GET api.anthropic.com/api/oauth/usage with a Claude Code token
-            (env -> keychain -> refresh), CLI User-Agent + oauth beta header.
+Providers (payload v3, one line of JSON):
+  c   Claude Code  {h,d,r,$,t}   GET api.anthropic.com/api/oauth/usage
+  x   Codex        {h,d,r,$,t}   GET chatgpt.com/backend-api/wham/usage
+  g   GLM          {h,d,r,$,t}   GET open.bigmodel.cn/api/monitor/usage/quota/limit
+                                   (community endpoint, see docs §4.1; z.ai for intl)
+  ds  DeepSeek     {ok,cur,bal,gnt[,x_cur,x_bal],t}
+                                 GET api.deepseek.com/user/balance (official)
 
-Phase 1 scope: the 5h / weekly utilization windows + reset times + plan.
-Cost estimation (session-log parsing) is intentionally deferred to Phase 1b.
+Recipes mirror ericjypark/codex-island. Platform notes
+(docs/windows-port-design.zh-CN.md):
+  - macOS:          Claude OAuth in Keychain ("Claude Code-credentials").
+  - Windows/Linux:  Claude OAuth in ~/.claude/.credentials.json (same JSON).
+  - GLM/DeepSeek:   API key discovery: explicit env/CLI -> ~/.claude/settings.json
+                    (Claude Code routed through the provider) -> ~/.codex/config.toml
+                    (Codex routed through the provider).
+
+No tokens, keys or logs ever leave this machine — only the computed numbers.
 
 Usage:
-    python3 codexisland_bridge.py            # human-readable
-    python3 codexisland_bridge.py --json     # machine JSON (the BLE payload)
+    python codexisland_bridge.py              # human-readable table
+    python codexisland_bridge.py --json       # full JSON (what compact() shrinks)
+    python codexisland_bridge.py --ble 5      # BLE push loop, every 5 minutes
 """
 
+import argparse
 import json
 import os
 import ssl
@@ -34,14 +44,53 @@ CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_CODE_USER_AGENT = "claude-code/2.1.121"
 HTTP_TIMEOUT = 15
 
-# python.org's Python ships without a populated CA store, so the default
-# context fails TLS verification. Prefer certifi's bundle; fall back to the
-# system default if certifi isn't installed.
+# python.org's Python ships without a populated CA store (macOS), so the default
+# context fails TLS verification. Prefer certifi's bundle; Windows loads its own
+# system store either way.
 try:
     import certifi
     _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 except ImportError:
     _SSL_CTX = ssl.create_default_context()
+
+# Optional endpoint overrides (--glm-endpoint / --ds-endpoint).
+_GLM_ENDPOINT = None
+_DS_ENDPOINT = None
+
+# Runtime log sink (--log-file); None = stdout only.
+_LOG_FILE = None
+
+
+# --------------------------------------------------------------------------- #
+# Logging / console helpers
+# --------------------------------------------------------------------------- #
+def set_log_file(path):
+    global _LOG_FILE
+    _LOG_FILE = path
+
+
+def _log(msg):
+    """print() that also appends to --log-file (rotated at 1 MB)."""
+    print(msg, flush=True)
+    if not _LOG_FILE:
+        return
+    try:
+        if os.path.exists(_LOG_FILE) and os.path.getsize(_LOG_FILE) > 1_000_000:
+            os.replace(_LOG_FILE, _LOG_FILE + ".1")
+        with open(_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(str(msg) + "\n")
+    except OSError:
+        pass
+
+
+def _force_utf8_stdio():
+    """Chinese Windows consoles default to GBK; the table glyphs need UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
 
 
 # --------------------------------------------------------------------------- #
@@ -64,7 +113,7 @@ def _http(method, url, headers=None, body=None):
             return e.code, json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             return e.code, None
-    except (urllib.error.URLError, TimeoutError) as e:
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
         return 0, {"_transport_error": str(e)}
 
 
@@ -126,8 +175,13 @@ def fetch_codex():
 
 
 # --------------------------------------------------------------------------- #
-# Claude — keychain credential flow (mirrors CodexIsland's ClaudeCredentials)
+# Claude — credential flow, split per platform
+#   macOS:    Keychain "Claude Code-credentials" via /usr/bin/security
+#   Win/Linux: ~/.claude/.credentials.json  (same claudeAiOauth JSON)
 # --------------------------------------------------------------------------- #
+CLAUDE_CRED_FILE = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
+
+
 def _security(args):
     try:
         out = subprocess.run(
@@ -157,8 +211,7 @@ def _claude_keychain_account():
     return None
 
 
-def _read_claude_creds():
-    """Return dict of the claudeAiOauth keychain payload, or None."""
+def _read_claude_creds_keychain():
     account = _claude_keychain_account()
     if not account:
         return None
@@ -178,14 +231,54 @@ def _read_claude_creds():
     return {"account": account, "oauth": oauth}
 
 
-def _write_claude_creds(account, oauth):
-    """Persist rotated tokens back so Claude Code itself doesn't break."""
+def _write_claude_creds_keychain(account, oauth):
     payload = json.dumps({"claudeAiOauth": oauth})
     out = _security([
         "add-generic-password", "-U",
         "-s", "Claude Code-credentials", "-a", account, "-w", payload,
     ])
     return bool(out and out.returncode == 0)
+
+
+def _read_claude_creds():
+    """Return {account, oauth} or None. account is only meaningful on macOS."""
+    if sys.platform == "darwin":
+        return _read_claude_creds_keychain()
+    # Windows / Linux: plain file next to Claude Code's other state. It may be
+    # open by a running Claude Code — a transient PermissionError (OSError)
+    # just skips this round.
+    try:
+        with open(CLAUDE_CRED_FILE, encoding="utf-8") as f:
+            outer = json.load(f)
+        oauth = outer.get("claudeAiOauth") or {}
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not oauth.get("accessToken") or not oauth.get("refreshToken"):
+        return None
+    return {"account": None, "oauth": oauth}
+
+
+def _write_claude_creds(account, oauth):
+    """Persist rotated tokens back so Claude Code itself doesn't break."""
+    if sys.platform == "darwin":
+        return _write_claude_creds_keychain(account, oauth)
+    # Read-modify-write the whole file, keeping unknown top-level keys, via a
+    # temp file + atomic replace to shrink the race with a running Claude Code.
+    outer = {}
+    try:
+        with open(CLAUDE_CRED_FILE, encoding="utf-8") as f:
+            outer = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+    outer["claudeAiOauth"] = oauth
+    tmp = CLAUDE_CRED_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(outer, f)
+        os.replace(tmp, CLAUDE_CRED_FILE)
+        return True
+    except OSError:
+        return False
 
 
 def _refresh_claude(refresh_token):
@@ -257,7 +350,7 @@ def fetch_claude():
 
     if creds:
         oauth = creds["oauth"]
-        # 2) keychain access token
+        # 2) stored access token
         kind, val = _probe_claude(oauth["accessToken"], plan)
         if kind == "ok":
             return val
@@ -286,7 +379,185 @@ def fetch_claude():
 
 
 # --------------------------------------------------------------------------- #
-# Cost — parse local session logs (mirrors CodexIsland Pricing + log readers)
+# GLM & DeepSeek — shared API-key discovery
+#
+# Users typically reach these providers by routing Claude Code or Codex
+# through them, so the key is already on disk. Discovery order per provider:
+#   0. CCISLAND_<NAME> env / --glm-key / --deepseek-key CLI override
+#   1. provider's usual env names
+#   2. ~/.claude/settings.json "env" block (ANTHROPIC_BASE_URL points at the
+#      provider -> take ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY)
+#   3. ~/.codex/config.toml [model_providers.*] with a matching base_url
+#      (experimental_bearer_token, or env_key -> that env var)
+# --------------------------------------------------------------------------- #
+GLM_MONITOR_USAGE = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"   # mainland
+GLM_MONITOR_USAGE_INTL = "https://api.z.ai/api/monitor/usage/quota/limit"      # z.ai
+DS_BALANCE_URL = "https://api.deepseek.com/user/balance"
+
+_KEY_MATCHERS = {
+    "glm": {
+        "envs": ("CCISLAND_GLM_KEY", "GLM_API_KEY", "ZAI_API_KEY", "ZHIPUAI_API_KEY"),
+        "urls": ("bigmodel.cn", "z.ai"),
+        "anthropic_vars": ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"),
+    },
+    "deepseek": {
+        "envs": ("CCISLAND_DEEPSEEK_KEY", "DEEPSEEK_API_KEY", "DEEPSEEK_KEY"),
+        "urls": ("deepseek.com",),
+        "anthropic_vars": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
+    },
+}
+
+_GLM_CREDS = None   # cached (key, base_hint)
+_DS_CREDS = None
+
+
+def _load_claude_settings_env():
+    path = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return (json.load(f) or {}).get("env") or {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _load_codex_providers():
+    path = os.path.join(os.path.expanduser("~"), ".codex", "config.toml")
+    try:
+        import tomllib
+        with open(path, "rb") as f:
+            return tomllib.load(f).get("model_providers") or {}
+    except Exception:  # noqa: BLE001 — missing file, <3.11, or bad TOML all disable this source
+        return {}
+
+
+def _discover_key(matcher):
+    """Return (key, base_hint) or (None, None). See module docstring for order."""
+    for env in matcher["envs"]:
+        val = os.environ.get(env)
+        if val:
+            return val, None
+
+    env_block = _load_claude_settings_env()
+    base = env_block.get("ANTHROPIC_BASE_URL", "") or ""
+    if any(u in base for u in matcher["urls"]):
+        for var in matcher["anthropic_vars"]:
+            if env_block.get(var):
+                return env_block[var], base
+
+    for prov in _load_codex_providers().values():
+        base = prov.get("base_url", "") or ""
+        if any(u in base for u in matcher["urls"]):
+            key = prov.get("experimental_bearer_token")
+            if not key and prov.get("env_key"):
+                key = os.environ.get(prov["env_key"])
+            if key:
+                return key, base
+    return None, None
+
+
+def _glm_creds():
+    global _GLM_CREDS
+    if _GLM_CREDS is None:
+        _GLM_CREDS = _discover_key(_KEY_MATCHERS["glm"])
+    return _GLM_CREDS
+
+
+def _ds_creds():
+    global _DS_CREDS
+    if _DS_CREDS is None:
+        _DS_CREDS = _discover_key(_KEY_MATCHERS["deepseek"])
+    return _DS_CREDS
+
+
+# --------------------------------------------------------------------------- #
+# GLM usage (community endpoint — response shape documented in docs §4.1;
+# the three assumptions to re-verify on first live run are marked below)
+# --------------------------------------------------------------------------- #
+def fetch_glm():
+    key, base = _glm_creds()
+    if not key:
+        return {"error": "not configured"}
+
+    url = _GLM_ENDPOINT or (
+        GLM_MONITOR_USAGE_INTL if base and "z.ai" in base else GLM_MONITOR_USAGE
+    )
+    # Community scripts send the bare key; fall back to Bearer on 401.
+    status, obj = _http("GET", url, headers={"Authorization": key})
+    if status == 401:
+        status, obj = _http("GET", url, headers={"Authorization": f"Bearer {key}"})
+    if status == 401:
+        return {"error": "invalid glm key"}
+    if status != 200 or not isinstance(obj, dict):
+        return {"error": f"http {status}"}
+    if not obj.get("success"):
+        return {"error": str(obj.get("msg") or "glm query failed")}
+
+    d = obj.get("data") or {}
+    limits = d.get("limits") or []
+    tok = [x for x in limits if x.get("type") == "TOKENS_LIMIT"]
+    # ASSUMPTION (verify live): entry 0 = 5h window, entry 1 = weekly. If
+    # nextResetTime is present on both, the earlier reset must be the 5h one.
+    if len(tok) >= 2 and tok[0].get("nextResetTime") and tok[1].get("nextResetTime"):
+        r0 = _parse_reset(tok[0]["nextResetTime"])
+        r1 = _parse_reset(tok[1]["nextResetTime"])
+        if r0 and r1 and r1 < r0:
+            tok = [tok[1], tok[0]]
+
+    def win(x):
+        if not x:
+            return _window(0, None)
+        return _window(x.get("percentage", 0) or 0,
+                       _parse_reset(x.get("nextResetTime")))
+
+    return {
+        "plan": d.get("level"),
+        "five_hour": win(tok[0] if tok else None),
+        "weekly": win(tok[1] if len(tok) > 1 else None),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# DeepSeek balance (official endpoint, docs §5.1)
+# --------------------------------------------------------------------------- #
+def fetch_deepseek():
+    key, _ = _ds_creds()
+    if not key:
+        return {"error": "not configured"}
+
+    status, obj = _http("GET", _DS_ENDPOINT or DS_BALANCE_URL,
+                        headers={"Authorization": f"Bearer {key}"})
+    if status == 401:
+        return {"error": "invalid deepseek key"}
+    if status != 200 or not isinstance(obj, dict) or "balance_infos" not in obj:
+        return {"error": f"http {status}"}
+    infos = obj.get("balance_infos") or []
+    if not infos:
+        return {"error": "no balance info"}
+
+    def fnum(v):
+        try:
+            return float(v)  # API amounts are strings
+        except (TypeError, ValueError):
+            return 0.0
+
+    # Multi-currency accounts list one entry per currency; CNY first.
+    infos = sorted(infos, key=lambda x: 0 if x.get("currency") == "CNY" else 1)
+    main = infos[0]
+    out = {
+        "ok": bool(obj.get("is_available")),
+        "currency": main.get("currency", "CNY"),
+        "balance": fnum(main.get("total_balance")),
+        "granted": fnum(main.get("granted_balance")),
+        "extra": None,
+    }
+    if len(infos) > 1:
+        out["extra"] = {"currency": infos[1].get("currency", "USD"),
+                        "balance": fnum(infos[1].get("total_balance"))}
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Cost — parse local session logs, attributed per provider by model name
 # --------------------------------------------------------------------------- #
 # Per-million-token USD rates: (input, output, cache_create, cache_read)
 _PRICING = {
@@ -304,6 +575,17 @@ _PRICING = {
     "gpt-5-codex": (1.25, 10, 1.25, 0.125),
 }
 
+# Optional CNY-priced table for GLM / DeepSeek (per-million CNY, same tuple
+# order; converted to USD with CNY_PER_USD). Both providers are subscription /
+# pay-as-you-go where a $ estimate is secondary — leave empty (tokens still
+# counted, cost stays 0.00) or fill from the official pricing pages:
+#   https://open.bigmodel.cn/pricing  /  https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+_PRICING_CNY = {
+    # "glm-4.6": (in, out, cache_create, cache_read),
+    # "deepseek-chat": (in, out, cache_create, cache_read),
+}
+CNY_PER_USD = 7.2
+
 
 def _canonical_model(raw):
     # Strip a trailing date suffix "-XXXXXXXX" (dash + 8 digits).
@@ -312,11 +594,26 @@ def _canonical_model(raw):
     return raw
 
 
+def _owner_of(model):
+    """Which watch row a logged model belongs to (docs §4.4)."""
+    m = _canonical_model(model or "")
+    if m.startswith("glm"):
+        return "glm"
+    if m.startswith("deepseek"):
+        return "ds"
+    if m.startswith("gpt"):
+        return "codex"
+    return "claude"
+
+
 def _cost(model, in_, out, cc, cr):
     r = _PRICING.get(_canonical_model(model))
-    if not r:
-        return 0.0
-    return (in_ * r[0] + out * r[1] + cc * r[2] + cr * r[3]) / 1_000_000
+    if r:
+        return (in_ * r[0] + out * r[1] + cc * r[2] + cr * r[3]) / 1_000_000
+    r = _PRICING_CNY.get(_canonical_model(model))
+    if r:
+        return (in_ * r[0] + out * r[1] + cc * r[2] + cr * r[3]) / 1_000_000 / CNY_PER_USD
+    return 0.0
 
 
 def _today_midnight():
@@ -333,9 +630,9 @@ def _parse_ts(s):
         return 0.0
 
 
-def cost_claude(midnight):
+def _scan_claude_logs(midnight, totals):
+    """~/.claude/projects/**/*.jsonl — assistant usage, deduped by msg+request."""
     import glob
-    cost, tokens, seen = 0.0, 0, set()
     pat = os.path.expanduser("~/.claude/projects/**/*.jsonl")
     for path in glob.glob(pat, recursive=True):
         try:
@@ -358,26 +655,27 @@ def cost_claude(midnight):
                         continue
                     mid, rid = msg.get("id", ""), o.get("requestId", "")
                     if mid and rid:
-                        key = mid + ":" + rid
-                        if key in seen:
+                        # Dedup only within the same model owner; cheap and safe.
+                        key = _owner_of(model) + ":" + mid + ":" + rid
+                        if key in _seen:
                             continue
-                        seen.add(key)
+                        _seen.add(key)
                     i = u.get("input_tokens", 0) or 0
                     out = u.get("output_tokens", 0) or 0
                     cc = u.get("cache_creation_input_tokens", 0) or 0
                     cr = u.get("cache_read_input_tokens", 0) or 0
                     if not (i or out or cc or cr):
                         continue
-                    cost += _cost(model, i, out, cc, cr)
-                    tokens += i + out + cc + cr
+                    bucket = totals[_owner_of(model)]
+                    bucket[0] += _cost(model, i, out, cc, cr)
+                    bucket[1] += i + out + cc + cr
         except OSError:
             continue
-    return cost, tokens
 
 
-def cost_codex(midnight):
+def _scan_codex_logs(midnight, totals):
+    """~/.codex/sessions/**/rollout-*.jsonl — token_count events per model."""
     import glob
-    cost, tokens = 0.0, 0
     pat = os.path.expanduser("~/.codex/sessions/**/rollout-*.jsonl")
     for path in glob.glob(pat, recursive=True):
         try:
@@ -410,11 +708,24 @@ def cost_codex(midnight):
                     out = last.get("output_tokens", 0) or 0
                     if not (nonc or cached or out):
                         continue
-                    cost += _cost(cur_model or "gpt-5.4", nonc, out, 0, cached)
-                    tokens += nonc + out + cached
+                    bucket = totals[_owner_of(cur_model or "gpt-5.4")]
+                    bucket[0] += _cost(cur_model or "gpt-5.4", nonc, out, 0, cached)
+                    bucket[1] += nonc + out + cached
         except OSError:
             continue
-    return cost, tokens
+
+
+def _log_costs(midnight):
+    """Return {owner: [cost, tokens]} for owners claude/codex/glm/ds."""
+    totals = {name: [0.0, 0] for name in ("claude", "codex", "glm", "ds")}
+    global _seen
+    _seen = set()
+    _scan_claude_logs(midnight, totals)
+    _scan_codex_logs(midnight, totals)
+    return totals
+
+
+_seen = set()
 
 
 # --------------------------------------------------------------------------- #
@@ -422,17 +733,23 @@ def cost_codex(midnight):
 # --------------------------------------------------------------------------- #
 def collect():
     midnight = _today_midnight()
-    claude = fetch_claude()
-    codex = fetch_codex()
-    cc_cost, cc_tok = cost_claude(midnight)
-    cx_cost, cx_tok = cost_codex(midnight)
-    claude["cost_today"], claude["tokens_today"] = round(cc_cost, 2), cc_tok
-    codex["cost_today"], codex["tokens_today"] = round(cx_cost, 2), cx_tok
-    return {
+    data = {
         "ts": int(time.time()),
-        "claude": claude,
-        "codex": codex,
+        "claude": fetch_claude(),
+        "codex": fetch_codex(),
+        "glm": fetch_glm(),
+        "deepseek": fetch_deepseek(),
     }
+    totals = _log_costs(midnight)
+    owner_of_row = {"claude": "claude", "codex": "codex", "glm": "glm", "deepseek": "ds"}
+    for name, owner in owner_of_row.items():
+        cost, tok = totals.get(owner, (0.0, 0))
+        data[name]["cost_today"] = round(cost, 2)
+        data[name]["tokens_today"] = tok
+    return data
+
+
+_TITLES = {"claude": "Claude Code", "codex": "Codex", "glm": "GLM", "deepseek": "DeepSeek"}
 
 
 def _fmt_window(w):
@@ -449,13 +766,28 @@ def _fmt_window(w):
     return f"{pct:5.1f}%  {bar}  {reset}"
 
 
+def _fmt_balance(p):
+    sym = "¥" if p.get("currency", "CNY") == "CNY" else "$"
+    line = f"[{'OK' if p.get('ok') else '!!'}]  bal {sym}{p.get('balance', 0):.2f}"
+    line += f"  (granted {sym}{p.get('granted', 0):.2f}"
+    if p.get("extra"):
+        xsym = "¥" if p["extra"].get("currency", "USD") == "CNY" else "$"
+        line += f" + {xsym}{p['extra'].get('balance', 0):.2f}"
+    line += ")"
+    return line
+
+
 def render(data):
     lines = []
-    for name in ("claude", "codex"):
-        p = data[name]
-        title = "Claude Code" if name == "claude" else "Codex"
+    for name in ("claude", "codex", "glm", "deepseek"):
+        p = data.get(name) or {}
+        title = _TITLES[name]
         if "error" in p:
             lines.append(f"{title:12} ⚠ {p['error']}")
+            continue
+        if name == "deepseek":
+            lines.append(f"{title:12} {_fmt_balance(p)}")
+            lines.append(f"   today  ${p.get('cost_today', 0):.2f}   {p.get('tokens_today', 0):,} tok")
             continue
         plan = f" [{p['plan']}]" if p.get("plan") else ""
         lines.append(f"{title:12}{plan}")
@@ -468,8 +800,8 @@ def render(data):
 # --------------------------------------------------------------------------- #
 # BLE push — send the compact payload to the StopWatch over Nordic UART Service
 # --------------------------------------------------------------------------- #
-NUS_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"   # Mac -> watch (usage JSON)
-NUS_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"   # watch -> Mac (refresh request)
+NUS_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"   # host -> watch (usage JSON)
+NUS_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"   # watch -> host (refresh request)
 NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 BLE_DEVICE_NAME = "CC Island"
 MANUAL_REFRESH_MIN_GAP = 5  # seconds — throttle button-triggered refreshes
@@ -477,9 +809,23 @@ SCAN_TIMEOUT_S = 20
 RECONNECT_DELAY_S = 3
 MAX_STALE_PROVIDER_S = 6 * 60 * 60
 
+# Window providers use {five_hour, weekly}; DeepSeek is the balance-row provider.
+_WINDOW_PROVIDERS = ("claude", "codex", "glm")
+_ALL_PROVIDERS = ("claude", "codex", "glm", "deepseek")
+
+
+def _provider_ok(name, p):
+    """Is this provider's reading good enough to cache as last-good?"""
+    if "error" in p:
+        return False
+    if name == "deepseek":
+        return "balance" in p
+    return bool(p.get("five_hour") and p.get("weekly"))
+
 
 def _win_pct(w):
-    return int(round(w["pct"])) if w else 0
+    # Payload boundary: clamp defensively, the watch bar assumes 0..100.
+    return int(round(min(100.0, max(0.0, w["pct"])))) if w else 0
 
 
 def _reset_min(w):
@@ -489,7 +835,11 @@ def _reset_min(w):
 
 
 def compact(data):
-    """Short-key one-line JSON for the watch: c/x -> {h,d,r,$,t}."""
+    """Short-key one-line JSON for the watch (payload v3).
+
+    Window rows: {h,d,r,$,t}. Providers that are unconfigured or failing with
+    no cached fallback are omitted entirely, so the watch shows its "--" state.
+    """
     def prov(p):
         return {
             "h": _win_pct(p.get("five_hour")),
@@ -498,8 +848,28 @@ def compact(data):
             "$": round(p.get("cost_today", 0), 2),
             "t": int(p.get("tokens_today", 0)),
         }
-    return json.dumps({"c": prov(data["claude"]), "x": prov(data["codex"])},
-                      separators=(",", ":"))
+
+    out = {"c": prov(data["claude"]), "x": prov(data["codex"])}
+
+    glm = data.get("glm") or {}
+    if "error" not in glm:
+        out["g"] = prov(glm)
+
+    ds = data.get("deepseek") or {}
+    if "error" not in ds:
+        row = {
+            "ok": 1 if ds.get("ok") else 0,
+            "cur": ds.get("currency", "CNY"),
+            "bal": round(ds.get("balance", 0), 2),
+            "gnt": round(ds.get("granted", 0), 2),
+            "t": int(ds.get("tokens_today", 0)),
+        }
+        if ds.get("extra"):
+            row["x_cur"] = ds["extra"].get("currency", "USD")
+            row["x_bal"] = round(ds["extra"].get("balance", 0), 2)
+        out["ds"] = row
+
+    return json.dumps(out, separators=(",", ":"))
 
 
 async def ble_loop(interval_s):
@@ -513,9 +883,9 @@ async def ble_loop(interval_s):
 
     def remember_good(data):
         now = time.time()
-        for name in ("claude", "codex"):
+        for name in _ALL_PROVIDERS:
             provider = data.get(name) or {}
-            if "error" not in provider and provider.get("five_hour") and provider.get("weekly"):
+            if _provider_ok(name, provider):
                 cached = dict(provider)
                 cached["_cached_at"] = now
                 last_good[name] = cached
@@ -523,7 +893,7 @@ async def ble_loop(interval_s):
     def with_cached_windows(data):
         now = time.time()
         merged = dict(data)
-        for name in ("claude", "codex"):
+        for name in _ALL_PROVIDERS:
             provider = dict(data.get(name) or {})
             cached = last_good.get(name)
             if "error" in provider and cached and now - cached.get("_cached_at", 0) <= MAX_STALE_PROVIDER_S:
@@ -557,9 +927,9 @@ async def ble_loop(interval_s):
                 if name:
                     names.append(name)
             if names:
-                print("  visible BLE names:", ", ".join(sorted(set(names))[:12]))
+                _log("  visible BLE names: " + ", ".join(sorted(set(names))[:12]))
         except Exception as e:  # noqa: BLE001
-            print("  scan diagnostic failed:", e)
+            _log("  scan diagnostic failed: " + repr(e))
         return None
 
     async def connect_watch(dev):
@@ -571,11 +941,11 @@ async def ble_loop(interval_s):
             timeout=20,
         )
         await client.connect()
-        print(f"connected to {dev.address}")
+        _log(f"connected to {dev.address}")
         try:
             await client.start_notify(NUS_TX_UUID, lambda _h, _d: refresh.set())
         except Exception as e:  # noqa: BLE001
-            print("  (button refresh unavailable:", e, ")")
+            _log("  (button refresh unavailable: " + repr(e) + ")")
         return client
 
     async def push(client, tag):
@@ -588,16 +958,16 @@ async def ble_loop(interval_s):
             await asyncio.sleep(0.5)
             await client.write_gatt_char(NUS_RX_UUID, (payload + "\n").encode(), response=False)
         last_push[0] = time.time()
-        print(f"pushed ({tag}):", payload)
+        _log(f"pushed ({tag}): {payload}")
 
     client = None
     while True:
         try:
             if client is None or not client.is_connected:
-                print(f"scanning for '{BLE_DEVICE_NAME}'...")
+                _log(f"scanning for '{BLE_DEVICE_NAME}'...")
                 dev = await find_watch()
                 if not dev:
-                    print("  not found — is the CC Island app open on the watch? retrying")
+                    _log("  not found — is the CC Island app open on the watch? retrying")
                     await asyncio.sleep(5)
                     continue
                 client = await connect_watch(dev)
@@ -615,7 +985,7 @@ async def ble_loop(interval_s):
                 for task in pending:
                     task.cancel()
                 if disconnect_task in done:
-                    print("disconnected")
+                    _log("disconnected")
                     client = None
                     refresh.clear()
                     continue
@@ -624,13 +994,13 @@ async def ble_loop(interval_s):
                     if time.time() - last_push[0] >= MANUAL_REFRESH_MIN_GAP:
                         await push(client, "button")
                     else:
-                        print("  refresh throttled (too soon)")
+                        _log("  refresh throttled (too soon)")
                 else:
                     await push(client, "auto")
             except asyncio.TimeoutError:
                 await push(client, "auto")
         except Exception as e:  # noqa: BLE001 — keep the loop alive across BLE hiccups
-            print("ble error:", e)
+            _log("ble error: " + repr(e))
             try:
                 if client:
                     await client.disconnect()
@@ -643,24 +1013,47 @@ async def ble_loop(interval_s):
 
 
 def main():
-    if "--ble" in sys.argv:
+    _force_utf8_stdio()
+
+    ap = argparse.ArgumentParser(
+        prog="codexisland_bridge",
+        description="CC Island bridge — Claude/Codex/GLM/DeepSeek usage & balance on the M5 StopWatch over BLE",
+    )
+    ap.add_argument("--ble", nargs="?", const=5.0, default=None, type=float, metavar="MIN",
+                    help="push to the watch over BLE every MIN minutes (default: 5)")
+    ap.add_argument("--json", action="store_true",
+                    help="print the full collected JSON instead of a table")
+    ap.add_argument("--log-file", metavar="PATH",
+                    help="also append log output to PATH (rotated at 1 MB)")
+    ap.add_argument("--glm-key", help="explicit GLM API key (skips key discovery)")
+    ap.add_argument("--deepseek-key", help="explicit DeepSeek API key (skips key discovery)")
+    ap.add_argument("--glm-endpoint", help="override the GLM usage endpoint URL")
+    ap.add_argument("--ds-endpoint", help="override the DeepSeek balance endpoint URL")
+    args = ap.parse_args()
+
+    global _GLM_ENDPOINT, _DS_ENDPOINT
+    if args.glm_endpoint:
+        _GLM_ENDPOINT = args.glm_endpoint
+    if args.ds_endpoint:
+        _DS_ENDPOINT = args.ds_endpoint
+    if args.glm_key:
+        os.environ["CCISLAND_GLM_KEY"] = args.glm_key
+    if args.deepseek_key:
+        os.environ["CCISLAND_DEEPSEEK_KEY"] = args.deepseek_key
+    if args.log_file:
+        set_log_file(args.log_file)
+
+    if args.ble:
         import asyncio
-        i = sys.argv.index("--ble")
-        mins = 5.0
-        if i + 1 < len(sys.argv):
-            try:
-                mins = float(sys.argv[i + 1])
-            except ValueError:
-                pass
-        print(f"BLE push every {mins:g} min (Ctrl-C to stop)")
-        asyncio.run(ble_loop(int(mins * 60)))
+        _log(f"BLE push every {args.ble:g} min (Ctrl-C to stop)")
+        asyncio.run(ble_loop(int(args.ble * 60)))
         return
 
     data = collect()
-    if "--json" in sys.argv:
-        print(json.dumps(data, indent=2))
+    if args.json:
+        _log(json.dumps(data, indent=2))
     else:
-        print(render(data))
+        _log(render(data))
 
 
 if __name__ == "__main__":
