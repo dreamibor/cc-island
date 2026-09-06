@@ -9,7 +9,9 @@
 
 - **手表**：已烧录 adapt-win 固件，CC Island app 正常运行，蓝牙地址固定为
   `D8:74:88:86:95:03`（NVS 持久化，重启/双方重启均不变）。
-- **Windows bridge**：正在后台运行（`--ble 5`），已验证向手表成功推送 GLM/DeepSeek/ChatGPT 数据。
+- **Windows bridge**：当前未运行（进程已按交接要求清理）。启动：
+  `& C:\Espressif	ools\python6.1env\Scripts\python.exe bridge\codexisland_bridge.py --ble 5`
+  已验证向手表成功推送 GLM/DeepSeek/ChatGPT 数据。
 - **数据面**：GLM（lite 套餐，5h/每周窗口）✅、DeepSeek（¥188.82）✅、ChatGPT ✅、
   Claude ❌（本机未执行 `claude /login`，表盘该行为占位 `--`）。
 - **key 存放**：`C:\Users\ZHAOYU\.cc-island\config.json`（专用配置文件，模板已建好，填 key 即用）。
@@ -114,6 +116,8 @@ Windows 侧一切 Python 用 IDF venv；WSL 内有 Ubuntu 24.04 + Python 3.12（
 | PowerShell 5.1 调 WinRT 需全限定类型加载 + 枚举参数 | 见 `%TEMP%\ccisland_selftest\toggle_bt.ps1`（临时） |
 | bleak 3.0.2：Windows 对刚重启设备的 GATT 发现偶发不完整 | `connect_watch` 已加 NUS 服务校验，失败快速重试 |
 | 强杀 bridge 进程会留下幽灵 GATT 会话占住手表 | 停 bridge 用 Ctrl-C 正常退出；已中毒则重启 bthserv |
+| Windows 蓝牙栈在配对/删除配对风暴后整体卡死：所有扫描返回 0x80070016（连周围其他设备都看不到） | 管理员重启 bthserv + 重新枚举蓝牙 PnP 设备（`scripts/reset_bt_stack.ps1`，需 UAC）；实测 30 秒恢复 |
+| bleak 3.x 把部分 WinRT GATT 失败包装成 asyncio.CancelledError（BaseException），穿透 except Exception 直接杀死 bridge | ble_loop 已对连接/推送单独捕获并走重连逻辑 |
 
 ## 6. 已知问题 / 待办
 
@@ -126,8 +130,8 @@ Windows 侧一切 Python 用 IDF venv；WSL 内有 Ubuntu 24.04 + Python 3.12（
 5. **GATT 布局将来变更时**：bump `ble_nus.h` 的 `kGattDbVersion`（地址自动轮换，避开 Windows 缓存）。
 6. **配对密钥已持久化**（2026-09-07 修复）：Windows 侧配对一次后，手表关机/重启都能自动重连。
    若将来 Windows 又出现"连接/已配对"反复切换：先在设置里删除设备并重配一次；若固件改了 GATT 布局，
-   bump `kGattDbVersion`。深度排查工具：`scripts/ble_serial_capture.py`（串口抓取，本次 BLE 调试的主力工具）；
-   临时目录的 `reset_bt_stack.ps1` / `toggle_bt.ps1` 若需要可移入 scripts/。
+   bump `kGattDbVersion`。深度排查工具：`scripts/ble_serial_capture.py`（串口抓取，本次 BLE 调试的主力工具）；蓝牙栈重置：`scripts/reset_bt_stack.ps1`（需 UAC）；远程仓库 `dreamibor` = https://github.com/dreamibor/cc-island.git（adapt-win 与 main 均已推送）；
+   蓝牙栈重置脚本已入库：`scripts/reset_bt_stack.ps1`（需 UAC）。
 
 ## 7. 验证记录（2026-09-07）
 
