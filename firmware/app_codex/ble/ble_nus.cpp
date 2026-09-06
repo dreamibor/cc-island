@@ -23,6 +23,11 @@
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
+#include "store/config/ble_store_config.h"
+
+// Provided by NimBLE's store/config component (no public header declares it;
+// the official bleprph example forward-declares it the same way).
+extern "C" void ble_store_config_init(void);
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
@@ -283,6 +288,10 @@ void start(const char* device_name)
         mclog::tagError(TAG, "nimble_port_init failed rc={}", rc);
         return;
     }
+
+    // Wire the NimBLE store to NVS so pairing keys survive reboots — without
+    // this, Windows' bonded reconnect flaps connected/paired forever.
+    ble_store_config_init();
 
     ble_svc_gap_init();
     ble_svc_gatt_init();
