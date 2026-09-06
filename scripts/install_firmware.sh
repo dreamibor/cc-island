@@ -123,7 +123,9 @@ sdk = root / "sdkconfig.defaults"
 txt = sdk.read_text()
 if "CONFIG_BT_NIMBLE_ENABLED=y" not in txt:
     sdk.write_text(txt.rstrip() + "\n\n# BLE (NimBLE) for CC Island usage push\n"
-                   "CONFIG_BT_ENABLED=y\nCONFIG_BT_NIMBLE_ENABLED=y\n")
+                   "CONFIG_BT_ENABLED=y\nCONFIG_BT_NIMBLE_ENABLED=y\n"
+                   "# v6.1 NimBLE overflows its 4K default host stack once advertising\n"
+                   "CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192\n")
     print("   patched sdkconfig.defaults")
 PY
 

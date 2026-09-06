@@ -30,6 +30,8 @@ static constexpr int kAlertThreshold = 80;
 
 // DeepSeek balance (CNY) below which the watch buzzes once (docs §5.3).
 static constexpr double kDsLowBalanceCny = 50.0;
+// Balance bar full scale: percentage shown = balance / kDsFullBalanceCny.
+static constexpr double kDsFullBalanceCny = 200.0;
 
 namespace {
 
@@ -93,13 +95,16 @@ struct ProviderRow {
     }
 };
 
-// DeepSeek balance row: big balance instead of a window percentage, no bar.
-// Strings are kept ASCII — the factory firmware font subsets are not
-// guaranteed to carry CJK/currency glyphs.
+// DeepSeek balance row: structurally identical to the window rows — top-right
+// shows a "--" placeholder (no percentage), the status bar fills with
+// balance / kDsFullBalanceCny, and the gray line carries the actual balance.
+// Strings stay ASCII — factory font subsets may lack CJK/currency glyphs.
 struct DsRow {
-    lv_obj_t* cont = nullptr;
-    lv_obj_t* bal  = nullptr;  // "110.00 CNY"
-    double last_bal = -1;
+    lv_obj_t* cont   = nullptr;
+    lv_obj_t* bar    = nullptr;
+    lv_obj_t* pct    = nullptr;  // "--" placeholder, no percentage
+    lv_obj_t* detail = nullptr;  // "110.00 CNY"
+    double last_bal  = -1;
 
     void set_dim(bool dim)
     {
@@ -109,7 +114,9 @@ struct DsRow {
     void show_placeholder()
     {
         set_dim(true);
-        if (bal) lv_label_set_text(bal, "--");
+        if (bar) lv_bar_set_value(bar, 0, LV_ANIM_OFF);
+        if (pct) lv_label_set_text(pct, "--");
+        if (detail) lv_label_set_text(detail, "no data");
         last_bal = -1;
     }
 
@@ -118,10 +125,14 @@ struct DsRow {
     bool apply(const char* cur, double balance)
     {
         set_dim(false);
-        if (bal) {
+        int pct_val = static_cast<int>(balance / kDsFullBalanceCny * 100.0 + 0.5);
+        pct_val = pct_val < 0 ? 0 : (pct_val > 100 ? 100 : pct_val);
+        if (bar) lv_bar_set_value(bar, pct_val, LV_ANIM_OFF);
+        if (pct) lv_label_set_text(pct, "--");
+        if (detail) {
             char b[24];
             std::snprintf(b, sizeof(b), "%.2f %s", balance, cur ? cur : "CNY");
-            lv_label_set_text(bal, b);
+            lv_label_set_text(detail, b);
         }
 
         bool crossed = (last_bal >= 0 && last_bal >= kDsLowBalanceCny && balance < kDsLowBalanceCny);
@@ -248,11 +259,32 @@ DsRow build_bal_row(lv_obj_t* parent, int y_center, const lv_image_dsc_t* logo, 
     lv_obj_set_style_text_color(name_lbl, lv_color_hex(color), 0);
     lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 56, 13);  // center of the 26px text on the logo mid-line (y=26)
 
-    // Big balance (right aligned): "110.00 CNY"
-    row.bal = lv_label_create(cont);
-    lv_obj_set_style_text_font(row.bal, &lv_font_maple_mono_medium_28, 0);
-    lv_obj_set_style_text_color(row.bal, lv_color_hex(color), 0);
-    lv_obj_align(row.bal, LV_ALIGN_TOP_RIGHT, 0, 12);
+    // Top-right placeholder: no percentage for the balance row
+    row.pct = lv_label_create(cont);
+    lv_label_set_text(row.pct, "--");
+    lv_obj_set_style_text_font(row.pct, &lv_font_maple_mono_medium_28, 0);
+    lv_obj_set_style_text_color(row.pct, lv_color_hex(color), 0);
+    lv_obj_align(row.pct, LV_ALIGN_TOP_RIGHT, 0, 12);
+
+    // Balance bar (full scale = kDsFullBalanceCny), same geometry as window rows
+    row.bar = lv_bar_create(cont);
+    lv_obj_set_size(row.bar, 300, 24);
+    lv_obj_align(row.bar, LV_ALIGN_TOP_MID, 0, 52);
+    lv_bar_set_range(row.bar, 0, 100);
+    lv_obj_set_style_radius(row.bar, 12, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(row.bar, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(row.bar, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(row.bar, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(row.bar, 12, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(row.bar, lv_color_hex(color), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(row.bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_add_flag(row.bar, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    // Gray line: the actual balance
+    row.detail = lv_label_create(cont);
+    lv_obj_set_style_text_font(row.detail, &lv_font_maple_mono_medium_24, 0);
+    lv_obj_set_style_text_color(row.detail, lv_color_hex(kDetailColor), 0);
+    lv_obj_align(row.detail, LV_ALIGN_TOP_MID, 0, 84);
 
     return row;
 }

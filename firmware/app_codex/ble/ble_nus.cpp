@@ -17,6 +17,7 @@
 #include <nvs_flash.h>
 #include <mooncake_log.h>
 
+#include <esp_random.h>
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -138,14 +139,24 @@ int gap_event(struct ble_gap_event* event, void*)
 {
     switch (event->type) {
         case BLE_GAP_EVENT_CONNECT:
+            mclog::tagInfo(TAG, "connect status={} handle={}",
+                           event->connect.status, event->connect.conn_handle);
             if (event->connect.status == 0)
                 g_conn_handle = event->connect.conn_handle;
             else
                 start_advertising();
             break;
         case BLE_GAP_EVENT_DISCONNECT:
+            mclog::tagInfo(TAG, "disconnect reason={:#x}", event->disconnect.reason);
             g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             start_advertising();
+            break;
+        case BLE_GAP_EVENT_MTU:
+            mclog::tagInfo(TAG, "mtu {}->{}", event->mtu.conn_handle, event->mtu.value);
+            break;
+        case BLE_GAP_EVENT_SUBSCRIBE:
+            mclog::tagInfo(TAG, "subscribe handle={} reason={}",
+                           event->subscribe.attr_handle, event->subscribe.reason);
             break;
         case BLE_GAP_EVENT_ADV_COMPLETE:
             start_advertising();
@@ -162,23 +173,46 @@ void start_advertising()
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
+    // flags + complete name go into the adv packet; the 128-bit service UUID
+    // goes into the scan response. Both in one packet totals 32 bytes — one
+    // over the 31-byte legacy limit — so ble_gap_adv_set_fields fails with
+    // EMSGSIZE and the device would advertise with NO name and NO UUID.
     struct ble_hs_adv_fields fields = {};
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     fields.name = (uint8_t*)g_name;
     fields.name_len = strlen(g_name);
     fields.name_is_complete = 1;
-    fields.uuids128 = &kSvcUuid;
-    fields.num_uuids128 = 1;
-    fields.uuids128_is_complete = 1;
-    ble_gap_adv_set_fields(&fields);
+    int rc = ble_gap_adv_set_fields(&fields);
+    if (rc != 0) {
+        mclog::tagError(TAG, "adv_set_fields rc={}", rc);
+        return;
+    }
 
-    ble_gap_adv_start(g_addr_type, nullptr, BLE_HS_FOREVER, &adv_params,
-                      gap_event, nullptr);
+    struct ble_hs_adv_fields rsp = {};
+    rsp.uuids128 = &kSvcUuid;
+    rsp.num_uuids128 = 1;
+    rsp.uuids128_is_complete = 1;
+    rc = ble_gap_adv_rsp_set_fields(&rsp);
+    if (rc != 0) {
+        mclog::tagError(TAG, "adv_rsp_set_fields rc={}", rc);
+        return;
+    }
+
+    rc = ble_gap_adv_start(g_addr_type, nullptr, BLE_HS_FOREVER, &adv_params,
+                           gap_event, nullptr);
+    if (rc != 0)
+        mclog::tagError(TAG, "adv_start rc={}", rc);
 }
 
 void on_sync()
 {
-    ble_hs_id_infer_auto(0, &g_addr_type);
+    // We provision a random static address in start(); never fall back to the
+    // public eFuse MAC (that is the address Windows' poisoned cache is keyed on).
+    g_addr_type = BLE_OWN_ADDR_RANDOM;
+    uint8_t addr[6] = {0};
+    ble_hs_id_copy_addr(BLE_ADDR_RANDOM, addr, nullptr);
+    mclog::tagInfo(TAG, "identity {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                   addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
     start_advertising();
     mclog::tagInfo(TAG, "advertising as '{}'", g_name);
 }
@@ -218,6 +252,17 @@ void start(const char* device_name)
     ble_gatts_count_cfg(kSvcs);
     ble_gatts_add_svcs(kSvcs);
     ble_svc_gap_device_name_set(g_name);
+
+    // Fresh random static identity per boot: Windows poisons its per-address
+    // GATT cache when a flashed device's database changes, then tears down
+    // every new connection with HCI 0x13. A new address each boot sidesteps
+    // the poisoned cache (clients match this device by name, not address).
+    {
+        uint8_t rnd[6] = {0};
+        esp_fill_random(rnd, sizeof(rnd));
+        rnd[0] |= 0xC0;   // static random address: the two MSBs must be 1
+        ble_hs_id_set_rnd(rnd);
+    }
 
     ble_hs_cfg.sync_cb = on_sync;
 

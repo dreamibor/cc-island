@@ -129,7 +129,12 @@ def _parse_reset(value):
     if value is None:
         return None
     if isinstance(value, (int, float)):
-        return int(value)
+        value = int(value)
+        # GLM's nextResetTime arrives in milliseconds; normalize to seconds
+        # (ms-since-epoch crossed 10^12 in 2001, s-since-epoch hits it in 33658).
+        if value > 10**12:
+            value //= 1000
+        return value
     # ISO string
     try:
         from datetime import datetime
@@ -664,7 +669,10 @@ def _win_pct(w):
 def _reset_min(w):
     if not w or not w.get("reset_at"):
         return 0
-    return max(0, int((w["reset_at"] - time.time()) / 60))
+    reset_at = w["reset_at"]
+    if reset_at > 10**12:      # defensive: ms leaked past _parse_reset
+        reset_at //= 1000
+    return max(0, int((reset_at - time.time()) / 60))
 
 
 def compact(data):
@@ -766,9 +774,20 @@ async def ble_loop(interval_s):
         await client.connect()
         _log(f"connected to {dev.address}")
         try:
+            # Windows can return an incomplete GATT table right after the watch
+            # (re)boots; force discovery and fail fast so the outer loop retries.
+            nus = next((s for s in client.services
+                        if s.uuid.lower().startswith(NUS_SERVICE_UUID[:8])), None)
+            if nus is None or not nus.characteristics:
+                raise RuntimeError("NUS service not discovered yet (transient)")
             await client.start_notify(NUS_TX_UUID, lambda _h, _d: refresh.set())
         except Exception as e:  # noqa: BLE001
             _log("  (button refresh unavailable: " + repr(e) + ")")
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise
         return client
 
     async def push(client, tag):
