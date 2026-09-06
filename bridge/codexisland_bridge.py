@@ -812,8 +812,25 @@ async def ble_loop(interval_s):
                     _log("  not found — is the CC Island app open on the watch? retrying")
                     await asyncio.sleep(5)
                     continue
-                client = await connect_watch(dev)
-                await push(client, "connect")
+                try:
+                    client = await connect_watch(dev)
+                    await push(client, "connect")
+                except asyncio.CancelledError as e:
+                    # bleak's winrt backend signals some GATT failures by raising
+                    # CancelledError (a BaseException) — must not kill the loop.
+                    _log("ble error: " + repr(e))
+                    client = None
+                    refresh.clear()
+                    disconnected.clear()
+                    await asyncio.sleep(RECONNECT_DELAY_S)
+                    continue
+                except Exception as e:  # noqa: BLE001
+                    _log("ble error: " + repr(e))
+                    client = None
+                    refresh.clear()
+                    disconnected.clear()
+                    await asyncio.sleep(RECONNECT_DELAY_S)
+                    continue
 
             # Wake on either the periodic timer or a button-triggered refresh.
             try:
