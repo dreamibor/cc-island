@@ -114,40 +114,60 @@ def read_png_pixels(path):
     return w, h, 4, out, has_alpha
 
 
-def coverage_grid(path, size=48):
-    """Aspect-fit the PNG into a [y][x] grid of shape coverage 0..1."""
+def coverage_grid(path, size=48, content_ratio=0.875):
+    """Coverage grid with uniform framing across logos.
+
+    The art is trimmed to its bounding box, uniformly scaled so the larger
+    dimension spans content_ratio*size, and centered in the square grid —
+    every logo then carries the same visual weight and sits axis-centered.
+    """
     w, h, bpp, rows, has_alpha = read_png_pixels(path)
 
     def cov(x, y):
         o = x * bpp                              # rows[y] is one RGBA row
         if has_alpha:
-            return rows[y][o + 3] / 255.0          # transparent PNG -> alpha mask
+            return rows[y][o + 3] / 255.0        # transparent PNG -> alpha mask
         r, g, b = rows[y][o], rows[y][o + 1], rows[y][o + 2]
-        return (255 - (r + g + b) / 3) / 255.0     # opaque -> darkness mask
+        return (255 - (r + g + b) / 3) / 255.0   # opaque -> darkness mask
 
-    # fit preserving aspect: source extent covered by each target cell
-    scale = min(w / size, h / size)
-    sw, sh = w / scale, h / scale                   # scaled extent in cells
-    ox, oy = (size - sw) / 2.0, (size - sh) / 2.0   # centering offsets
+    # bounding box of the shape (noise floor at 4% coverage)
+    x0, y0, x1, y1 = w, h, 0, 0
+    for y in range(h):
+        for x in range(w):
+            if cov(x, y) > 0.04:
+                if x < x0: x0 = x
+                if x > x1: x1 = x
+                if y < y0: y0 = y
+                if y > y1: y1 = y
+    if x1 < x0 or y1 < y0:
+        return [[0.0] * size for _ in range(size)]
+    x1 += 1
+    y1 += 1
+    bw, bh = x1 - x0, y1 - y0
+
+    content = size * content_ratio
+    scale = max(bw, bh) / content            # uniform scale, larger dimension fits
+    ox = (size - bw / scale) / 2.0           # centering offsets in target cells
+    oy = (size - bh / scale) / 2.0
     grid = [[0.0] * size for _ in range(size)]
     for ty in range(size):
         sy0, sy1 = (ty - oy) * scale, (ty + 1 - oy) * scale
-        if sy1 <= 0 or sy0 >= h:
+        if sy1 <= 0 or sy0 >= bh:
             continue
         for tx in range(size):
             sx0, sx1 = (tx - ox) * scale, (tx + 1 - ox) * scale
-            if sx1 <= 0 or sx0 >= w:
+            if sx1 <= 0 or sx0 >= bw:
                 continue
             acc = area = 0.0
-            for y in range(max(0, int(sy0)), min(h, int(sy1) + 1)):
+            for y in range(max(0, int(sy0)), min(bh, int(sy1) + 1)):
                 wy = min(sy1, y + 1) - max(sy0, y)
                 if wy <= 0:
                     continue
-                for x in range(max(0, int(sx0)), min(w, int(sx1) + 1)):
+                for x in range(max(0, int(sx0)), min(bw, int(sx1) + 1)):
                     wx = min(sx1, x + 1) - max(sx0, x)
                     if wx <= 0:
                         continue
-                    acc += cov(x, y) * wx * wy
+                    acc += cov(x0 + x, y0 + y) * wx * wy
                     area += wx * wy
             grid[ty][tx] = acc / area if area else 0.0
     return grid

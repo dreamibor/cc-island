@@ -199,13 +199,13 @@ ProviderRow build_row(lv_obj_t* parent, int y_center, const lv_image_dsc_t* logo
     lv_label_set_text(name_lbl, name);
     lv_obj_set_style_text_font(name_lbl, &MontserratSemiBold26, 0);
     lv_obj_set_style_text_color(name_lbl, lv_color_hex(color), 0);
-    lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 56, 8);
+    lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 56, 13);  // center of the 26px text on the logo mid-line (y=26)
 
     // Big 5h percentage (right aligned)
     row.pct5h = lv_label_create(cont);
     lv_obj_set_style_text_font(row.pct5h, &lv_font_maple_mono_medium_28, 0);
     lv_obj_set_style_text_color(row.pct5h, lv_color_hex(color), 0);
-    lv_obj_align(row.pct5h, LV_ALIGN_TOP_RIGHT, 0, 6);
+    lv_obj_align(row.pct5h, LV_ALIGN_TOP_RIGHT, 0, 12);
 
     // 5h utilization bar — dim brand-tinted track + solid brand indicator
     row.bar = lv_bar_create(cont);
@@ -246,13 +246,13 @@ DsRow build_bal_row(lv_obj_t* parent, int y_center, const lv_image_dsc_t* logo, 
     lv_label_set_text(name_lbl, name);
     lv_obj_set_style_text_font(name_lbl, &MontserratSemiBold26, 0);
     lv_obj_set_style_text_color(name_lbl, lv_color_hex(color), 0);
-    lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 56, 8);
+    lv_obj_align(name_lbl, LV_ALIGN_TOP_LEFT, 56, 13);  // center of the 26px text on the logo mid-line (y=26)
 
     // Big balance (right aligned): "110.00 CNY"
     row.bal = lv_label_create(cont);
     lv_obj_set_style_text_font(row.bal, &lv_font_maple_mono_medium_28, 0);
     lv_obj_set_style_text_color(row.bal, lv_color_hex(color), 0);
-    lv_obj_align(row.bal, LV_ALIGN_TOP_RIGHT, 0, 6);
+    lv_obj_align(row.bal, LV_ALIGN_TOP_RIGHT, 0, 12);
 
     return row;
 }
