@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- Simplified "Z" mark for the GLM row (rendered black-on-white by gen_icons.py,
-     then tinted with kGlmColor). Stand-in glyph, not the official trademark asset. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-  <path d="M6,8 L42,8 L42,15 L18,37 L42,37 L42,44 L6,44 L6,37 L30,15 L6,15 Z" fill="#000000"/>
-</svg>

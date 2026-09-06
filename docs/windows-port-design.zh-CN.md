@@ -381,7 +381,7 @@ def fetch_deepseek():
 
 - 第 2 页 GLM 行直接复用现有 `build_row`/`ProviderRow`；DeepSeek 行为新增的余额行类型：大字位置显示 `¥110.00`（按 `cur` 映射符号：CNY→`¥`，USD→`$`），detail 行显示 `赠金 ¥10.00`（有第二币种则附 `· $2.50`），可用态异常时行降透明度。
 - 页面状态用 `static int s_page` 持久（app 关闭重开后停在原页，符合"瞄一眼"的使用习惯）。
-- 蓝键刷新、双键回主页、80%/低余额振动逻辑不变；logo 需新增 `logo_glm.c`（智谱 Z 标）与 `logo_deepseek.c`（DeepSeek 鲸鱼标），`gen_icons.py` 同步扩展，商标声明同现有条目。
+- 蓝键刷新、双键回主页、80%/低余额振动逻辑不变；logo 新增 `logo_glm.c` 与 `logo_deepseek.c`，均采用**官方标**：GLM 为官方白色 Z 标（`tools/glm.png`，带 alpha——黑色表盘上按官方暗底处理原样显示白色，行文字仍用 `kGlmColor`），DeepSeek 为官方 favicon 鲸鱼（`tools/deepseek.svg` → 渲染为 `tools/deepseek.png`）。`gen_icons.py` 生成：glm/deepseek 源为 PNG，走免依赖的 `png_to_logo.py`（alpha/暗度两种 coverage 规则 + 等比 fit）；claude/codex 源为 SVG，走 svglib 管线。商标声明同现有条目。
 - `app_codex.cpp` 改动集中在：页容器 ×2、触摸事件、`parse_and_apply` 里按 `"c"/"x"/"g"/"ds"` 四键分发 + 余额行 apply 函数。`ble_nus.cpp/h` 依旧零改动。
 
 ### 5.6 表盘效果预览（四提供商）
