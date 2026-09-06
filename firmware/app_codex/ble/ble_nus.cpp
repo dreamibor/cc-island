@@ -209,6 +209,18 @@ void on_sync()
     // We provision a random static address in start(); never fall back to the
     // public eFuse MAC (that is the address Windows' poisoned cache is keyed on).
     g_addr_type = BLE_OWN_ADDR_RANDOM;
+
+    // Fresh random static identity per boot: Windows poisons its per-address
+    // GATT cache when a flashed device's database changes, then tears down
+    // every new connection with HCI 0x13. A new address each boot sidesteps
+    // the poisoned cache (clients match this device by name, not address).
+    uint8_t rnd[6] = {0};
+    esp_fill_random(rnd, sizeof(rnd));
+    rnd[5] |= 0xC0;   // static random: the two MSBs of the MSB byte must be 1
+    int rc = ble_hs_id_set_rnd(rnd);
+    if (rc != 0)
+        mclog::tagError(TAG, "set_rnd rc={}", rc);
+
     uint8_t addr[6] = {0};
     ble_hs_id_copy_addr(BLE_ADDR_RANDOM, addr, nullptr);
     mclog::tagInfo(TAG, "identity {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
@@ -253,17 +265,10 @@ void start(const char* device_name)
     ble_gatts_add_svcs(kSvcs);
     ble_svc_gap_device_name_set(g_name);
 
-    // Fresh random static identity per boot: Windows poisons its per-address
-    // GATT cache when a flashed device's database changes, then tears down
-    // every new connection with HCI 0x13. A new address each boot sidesteps
-    // the poisoned cache (clients match this device by name, not address).
-    {
-        uint8_t rnd[6] = {0};
-        esp_fill_random(rnd, sizeof(rnd));
-        rnd[0] |= 0xC0;   // static random address: the two MSBs must be 1
-        ble_hs_id_set_rnd(rnd);
-    }
-
+    // A fresh random static identity is provisioned in on_sync() — the HCI
+    // transport only comes up at host sync, so set_rnd cannot run earlier
+    // (pre-sync it silently fails and advertising later dies with ENOADDR).
+    // Clients match this device by name, not address.
     ble_hs_cfg.sync_cb = on_sync;
 
     nimble_port_freertos_init(host_task);
