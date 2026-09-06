@@ -89,6 +89,7 @@ Windows 侧一切 Python 用 IDF venv；WSL 内有 Ubuntu 24.04 + Python 3.12（
 | GLM nextResetTime 是**毫秒** | 表盘显示 298 亿分钟倒计时 | `_parse_reset`/`_reset_min` 归一化（>10¹² 视为 ms） |
 | 随机地址在 host 同步前设置 | `adv_start rc=21 (ENOADDR)`，identity 全零 | 移入 `on_sync` 回调（HCI 通道同步后才可用） |
 | 随机地址 MSB 位设错字节 | `set_rnd` 校验拒绝（要求 val[5] 高 2 位=11） | `rnd[5] |= 0xC0` |
+| 配对密钥不持久 → 手表关机重启后，Windows 已配对记录重连失败，状态在"已连接/已配对"间切换，永远建不成工作连接（删除设备重配可临时恢复） | `CONFIG_BT_NIMBLE_NVS_PERSIST=y` + `ble_store_config_init()`：配对密钥与 CCCD 状态持久化到 NVS，重启后密钥仍在，Windows 自动重连成功 |
 
 ### BLE 地址策略（重要设计决策）
 
@@ -123,7 +124,9 @@ Windows 侧一切 Python 用 IDF venv；WSL 内有 Ubuntu 24.04 + Python 3.12（
 4. **bridge 常驻**：尚未注册自启。需要时以管理员运行
    `powershell -File scripts\setup_autostart.ps1`（任务计划 `CCIslandBridge`）。
 5. **GATT 布局将来变更时**：bump `ble_nus.h` 的 `kGattDbVersion`（地址自动轮换，避开 Windows 缓存）。
-6. **深度排查工具**：`scripts/ble_serial_capture.py`（串口抓取，本次 BLE 调试的主力工具）；
+6. **配对密钥已持久化**（2026-09-07 修复）：Windows 侧配对一次后，手表关机/重启都能自动重连。
+   若将来 Windows 又出现"连接/已配对"反复切换：先在设置里删除设备并重配一次；若固件改了 GATT 布局，
+   bump `kGattDbVersion`。深度排查工具：`scripts/ble_serial_capture.py`（串口抓取，本次 BLE 调试的主力工具）；
    临时目录的 `reset_bt_stack.ps1` / `toggle_bt.ps1` 若需要可移入 scripts/。
 
 ## 7. 验证记录（2026-09-07）
