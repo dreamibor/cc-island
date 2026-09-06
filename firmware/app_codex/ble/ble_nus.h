@@ -5,6 +5,12 @@
  */
 #pragma once
 
+#include <stdint.h>
+
+// Bump whenever this component's GATT layout changes: the persisted BLE
+// address is rotated so Windows does not serve a stale cached database.
+static constexpr uint8_t kGattDbVersion = 1;
+
 namespace ble_nus {
 
 // Bring up the NimBLE host once and start advertising the Nordic UART Service

@@ -14,10 +14,11 @@
 #include <cstring>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <esp_random.h>
 #include <nvs_flash.h>
+#include <nvs.h>
 #include <mooncake_log.h>
 
-#include <esp_random.h>
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -210,21 +211,44 @@ void on_sync()
     // public eFuse MAC (that is the address Windows' poisoned cache is keyed on).
     g_addr_type = BLE_OWN_ADDR_RANDOM;
 
-    // Fresh random static identity per boot: Windows poisons its per-address
-    // GATT cache when a flashed device's database changes, then tears down
-    // every new connection with HCI 0x13. A new address each boot sidesteps
-    // the poisoned cache (clients match this device by name, not address).
-    uint8_t rnd[6] = {0};
-    esp_fill_random(rnd, sizeof(rnd));
-    rnd[5] |= 0xC0;   // static random: the two MSBs of the MSB byte must be 1
-    int rc = ble_hs_id_set_rnd(rnd);
+    // Stable random static identity, persisted in NVS: the same address across
+    // watch AND Windows reboots, so the OS reuses its cached GATT database and
+    // reconnects without re-discovery. Regenerated only when kGattDbVersion
+    // changes (i.e. the GATT layout itself changed) — Windows poisons its
+    // per-address cache across DB changes and then kills every reconnection
+    // with HCI 0x13. Clients match this device by name, not address.
+    uint8_t addr[6] = {0};
+    {
+        nvs_handle_t h;
+        bool stored = false;
+        if (nvs_open("cc_island", NVS_READWRITE, &h) == ESP_OK) {
+            uint8_t ver = 0;
+            size_t len = sizeof(addr);
+            stored = (nvs_get_u8(h, "gatt_db_ver", &ver) == ESP_OK &&
+                      ver == kGattDbVersion &&
+                      nvs_get_blob(h, "ble_addr", addr, &len) == ESP_OK && len == sizeof(addr));
+            if (!stored) {
+                esp_fill_random(addr, sizeof(addr));
+                addr[5] |= 0xC0;   // static random: the two MSBs of the MSB byte must be 1
+                nvs_set_u8(h, "gatt_db_ver", kGattDbVersion);
+                nvs_set_blob(h, "ble_addr", addr, sizeof(addr));
+                nvs_commit(h);
+            }
+            nvs_close(h);
+        }
+        if (!stored && (addr[5] & 0xC0) != 0xC0) {
+            esp_fill_random(addr, sizeof(addr));
+            addr[5] |= 0xC0;
+        }
+    }
+    int rc = ble_hs_id_set_rnd(addr);
     if (rc != 0)
         mclog::tagError(TAG, "set_rnd rc={}", rc);
 
-    uint8_t addr[6] = {0};
-    ble_hs_id_copy_addr(BLE_ADDR_RANDOM, addr, nullptr);
+    uint8_t cur[6] = {0};
+    ble_hs_id_copy_addr(BLE_ADDR_RANDOM, cur, nullptr);
     mclog::tagInfo(TAG, "identity {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                   addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
+                   cur[5], cur[4], cur[3], cur[2], cur[1], cur[0]);
     start_advertising();
     mclog::tagInfo(TAG, "advertising as '{}'", g_name);
 }
@@ -254,16 +278,24 @@ void start(const char* device_name)
         nvs_flash_init();
     }
 
-    if (nimble_port_init() != ESP_OK) {
-        mclog::tagError(TAG, "nimble_port_init failed");
+    int rc = nimble_port_init();
+    if (rc != ESP_OK) {
+        mclog::tagError(TAG, "nimble_port_init failed rc={}", rc);
         return;
     }
 
     ble_svc_gap_init();
     ble_svc_gatt_init();
-    ble_gatts_count_cfg(kSvcs);
-    ble_gatts_add_svcs(kSvcs);
-    ble_svc_gap_device_name_set(g_name);
+    rc = ble_gatts_count_cfg(kSvcs);
+    if (rc != 0)
+        mclog::tagError(TAG, "gatts_count_cfg rc={}", rc);
+    rc = ble_gatts_add_svcs(kSvcs);
+    if (rc != 0)
+        mclog::tagError(TAG, "gatts_add_svcs rc={}", rc);
+    rc = ble_svc_gap_device_name_set(g_name);
+    if (rc != 0)
+        mclog::tagError(TAG, "gap_device_name_set rc={}", rc);
+    mclog::tagInfo(TAG, "NUS GATT registration complete");
 
     // A fresh random static identity is provisioned in on_sync() — the HCI
     // transport only comes up at host sync, so set_rnd cannot run earlier
