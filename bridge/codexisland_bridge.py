@@ -18,7 +18,8 @@ Recipes mirror ericjypark/codex-island. Platform notes
 (docs/windows-port-design.zh-CN.md):
   - macOS:          Claude OAuth in Keychain ("Claude Code-credentials").
   - Windows/Linux:  Claude OAuth in ~/.claude/.credentials.json (same JSON).
-  - GLM/DeepSeek:   API key discovery: explicit env/CLI -> ~/.claude/settings.json
+  - GLM/DeepSeek:   API key discovery: CLI -> ~/.cc-island/config.json (the
+                    dedicated store) -> provider env vars -> ~/.claude/settings.json
                     (Claude Code routed through the provider) -> ~/.codex/config.toml
                     (Codex routed through the provider).
 
@@ -394,13 +395,19 @@ GLM_MONITOR_USAGE = "https://open.bigmodel.cn/api/monitor/usage/quota/limit"   #
 GLM_MONITOR_USAGE_INTL = "https://api.z.ai/api/monitor/usage/quota/limit"      # z.ai
 DS_BALANCE_URL = "https://api.deepseek.com/user/balance"
 
+# Dedicated per-user config: keys live here instead of env vars or the CLI
+# tools' config files. Missing file is fine; only non-empty fields apply.
+APP_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".cc-island", "config.json")
+
 _KEY_MATCHERS = {
     "glm": {
+        "config_field": "glm_key",
         "envs": ("CCISLAND_GLM_KEY", "GLM_API_KEY", "ZAI_API_KEY", "ZHIPUAI_API_KEY"),
         "urls": ("bigmodel.cn", "z.ai"),
         "anthropic_vars": ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"),
     },
     "deepseek": {
+        "config_field": "deepseek_key",
         "envs": ("CCISLAND_DEEPSEEK_KEY", "DEEPSEEK_API_KEY", "DEEPSEEK_KEY"),
         "urls": ("deepseek.com",),
         "anthropic_vars": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
@@ -430,8 +437,29 @@ def _load_codex_providers():
         return {}
 
 
+_APP_CONFIG = None
+
+
+def _load_app_config():
+    """Cached read of ~/.cc-island/config.json (the dedicated key store)."""
+    global _APP_CONFIG
+    if _APP_CONFIG is None:
+        try:
+            with open(APP_CONFIG_FILE, encoding="utf-8") as f:
+                _APP_CONFIG = json.load(f) or {}
+        except (OSError, json.JSONDecodeError):
+            _APP_CONFIG = {}
+    return _APP_CONFIG
+
+
 def _discover_key(matcher):
     """Return (key, base_hint) or (None, None). See module docstring for order."""
+    # 1) the dedicated config store (~/.cc-island/config.json)
+    val = _load_app_config().get(matcher["config_field"])
+    if val:
+        return val, None
+
+    # 2) provider env vars (incl. the CCISLAND_* CLI-override names)
     for env in matcher["envs"]:
         val = os.environ.get(env)
         if val:
@@ -831,6 +859,8 @@ def main():
         _GLM_ENDPOINT = args.glm_endpoint
     if args.ds_endpoint:
         _DS_ENDPOINT = args.ds_endpoint
+    _GLM_ENDPOINT = _GLM_ENDPOINT or _load_app_config().get("glm_endpoint") or None
+    _DS_ENDPOINT = _DS_ENDPOINT or _load_app_config().get("ds_endpoint") or None
     if args.glm_key:
         os.environ["CCISLAND_GLM_KEY"] = args.glm_key
     if args.deepseek_key:

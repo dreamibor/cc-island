@@ -18,6 +18,12 @@
 4. **Claude/ChatGPT logo 换官方标**：源图 `tools/claude.png`、`tools/openai.png`（浏览器渲染官方 SVG 所得）。
 5. **成本统计降级为诊断项**：本地日志花费扫描从主流程移除，保留 `_log_costs` 仅供 `--json` 查看，表盘不显示。
    本文中 §4.4/§5.2/§5.4 的成本/归因/ok-gnt 相关草图按此理解。
+6. **专用 key 存放**：GLM/DeepSeek key 存 `~/.cc-island/config.json`（字段 `glm_key`/`deepseek_key`，
+   可选 `glm_endpoint`/`ds_endpoint` 覆盖端点）。发现顺序更新为：CLI → 专用配置文件 → 通用环境变量
+   → `settings.json` → `config.toml`（见 §4.2）。
+7. **App 图标**：launcher 图标换成 clover 标（`tools/clover.svg` → `clover.png`，着绿色），资产更名
+   `icon_ccisland.c`（原四标拼接 `icon_chatgpt.c` 弃用）。
+8. **亮度**：进入 app 时重读系统设置亮度并重新应用（`getBackLightBrightness(true)` + 重设），保证与系统设置一致。
 
 ---
 
@@ -225,10 +231,11 @@ def discover_key(name):
 
 | 优先级 | 来源 | 说明 |
 |---|---|---|
-| 0 | `--glm-key` / `--deepseek-key` CLI 参数；`CCISLAND_GLM_KEY` / `CCISLAND_DEEPSEEK_KEY` 环境变量 | 显式指定，最高优先 |
-| 1 | 通用 env：`GLM_API_KEY`/`ZAI_API_KEY`/`ZHIPUAI_API_KEY`；`DEEPSEEK_API_KEY` | 各家命名习惯 |
-| 2 | `%USERPROFILE%\.claude\settings.json` → `env` 块 | 用户用 **Claude Code 走该服务商** 的标准配置：`env.ANTHROPIC_BASE_URL` 含匹配串时，取 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`（GLM 官方：`https://open.bigmodel.cn/api/anthropic`；DeepSeek 官方：`https://api.deepseek.com/anthropic`） |
-| 3 | `%USERPROFILE%\.codex\config.toml` → `[model_providers.*]` | 用户用 **Codex 走该服务商** 的配置：`base_url` 含匹配串的 provider 段，取 `experimental_bearer_token`；若是 `env_key = "XXX"` 则回退读该环境变量（GLM 官方 Codex 配置即此形态） |
+| 0 | `--glm-key` / `--deepseek-key` CLI 参数 | 显式指定，最高优先 |
+| 1 | **专用配置文件 `%USERPROFILE%\.cc-island\config.json`** | 字段 `glm_key` / `deepseek_key`（推荐存放处）；`glm_endpoint` / `ds_endpoint` 可覆盖端点 |
+| 2 | 通用 env：`CCISLAND_GLM_KEY`/`GLM_API_KEY`/`ZAI_API_KEY`/`ZHIPUAI_API_KEY`；`CCISLAND_DEEPSEEK_KEY`/`DEEPSEEK_API_KEY` | 环境变量（含 CLI 注入） |
+| 3 | `%USERPROFILE%\.claude\settings.json` → `env` 块 | 用户用 **Claude Code 走该服务商** 的标准配置：`env.ANTHROPIC_BASE_URL` 含匹配串时，取 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`（GLM 官方：`https://open.bigmodel.cn/api/anthropic`；DeepSeek 官方：`https://api.deepseek.com/anthropic`） |
+| 4 | `%USERPROFILE%\.codex\config.toml` → `[model_providers.*]` | 用户用 **Codex 走该服务商** 的配置：`base_url` 含匹配串的 provider 段，取 `experimental_bearer_token`；若是 `env_key = "XXX"` 则回退读该环境变量（GLM 官方 Codex 配置即此形态） |
 | — | 全部未命中 | 视为"未配置"：payload 省略对应键，表盘该行显示 `--` |
 
 发现函数同时返回 `base_hint`（命中来源里的 base_url，用于选国内/国际端点，如 GLM），可被 `--glm-endpoint` 强制覆盖。TOML 解析用 Python 3.11+ 标准库 `tomllib`（只读，不回写）。

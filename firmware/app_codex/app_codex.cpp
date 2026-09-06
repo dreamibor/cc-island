@@ -292,7 +292,7 @@ bool update_ds_from_json(DsRow& row, cJSON* obj)
 AppCodex::AppCodex()
 {
     setAppInfo().name = "CC Island";
-    setAppInfo().icon = (void*)&icon_chatgpt;
+    setAppInfo().icon = (void*)&icon_ccisland;
 }
 
 void AppCodex::onCreate()
@@ -308,6 +308,12 @@ void AppCodex::onOpen()
 
     // Bring up BLE NUS (idempotent — only the first open actually starts it).
     ble_nus::start("CC Island");
+
+    // Re-assert the system-configured backlight: entering the app must not
+    // change it, and this snaps the panel back if a display event dimmed it.
+    int bl = GetHAL().getBackLightBrightness(true);
+    GetHAL().setBackLightBrightness(bl, false);
+    mclog::tagInfo(getAppInfo().name, "backlight re-applied: {}%", bl);
 
     LvglLockGuard lock;
 

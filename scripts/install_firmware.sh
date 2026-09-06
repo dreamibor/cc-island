@@ -46,7 +46,7 @@ cp "$REPO_ROOT"/firmware/assets/logo_claude.c           "$TARGET/main/assets/ima
 cp "$REPO_ROOT"/firmware/assets/logo_chatgpt.c          "$TARGET/main/assets/images/"
 cp "$REPO_ROOT"/firmware/assets/logo_glm.c              "$TARGET/main/assets/images/"
 cp "$REPO_ROOT"/firmware/assets/logo_deepseek.c         "$TARGET/main/assets/images/"
-cp "$REPO_ROOT"/firmware/assets/icon_chatgpt.c          "$TARGET/main/assets/images/"
+cp "$REPO_ROOT"/firmware/assets/icon_ccisland.c          "$TARGET/main/assets/images/"
 
 # 4. Apply the small, idempotent edits to the factory sources.
 echo "==> Registering the app (idempotent edits)..."
@@ -93,7 +93,7 @@ insert_after("main/main.cpp",
 # assets.h: declare the images
 insert_after("main/assets/assets.h",
              "LV_IMG_DECLARE(icon_watch_face);",
-             "LV_IMG_DECLARE(icon_chatgpt);\n"
+             "LV_IMG_DECLARE(icon_ccisland);\n"
              "LV_IMG_DECLARE(logo_claude);\n"
              "LV_IMG_DECLARE(logo_chatgpt);\n"
              "LV_IMG_DECLARE(logo_glm);\n"
